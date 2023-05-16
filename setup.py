@@ -10,7 +10,7 @@ if os.path.exists("README.md"):
 
 setuptools.setup(
     name="micro_trainer_transformers",
-    version="0.0.1",
+    version="0.0.2",
     author="Utrobin Mikhail",
     author_email="utrobinmv@yandex.ru",
     description=description,
@@ -25,7 +25,7 @@ setuptools.setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    install_requires=['pytorch-lightning<=2.0','torch','datasets'],
+    install_requires=['pytorch-lightning<2.0','torch','datasets'],
     entry_points={
         "console_scripts": []
     }

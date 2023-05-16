@@ -80,7 +80,11 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         self.train_mode_start = True
         
         self.pbar_train.clear()
-        self.pbar_train.reset(total=self.training_params.max_train_steps)
+        if self.training_params.max_train_steps is None:
+            self.pbar_train.reset(total=self._trainer.estimated_stepping_batches)
+        else:
+            self.pbar_train.reset(total=self.training_params.max_train_steps)
+            
         if self.pbar_train_restore_n > 0: #restore from checkpoint
             self.pbar_train.n = self.pbar_train_restore_n
             self.pbar_train_restore_n = 0
@@ -378,20 +382,29 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                 
         
         if self.training_params.evaluation_strategy == 'steps':
-            val_check_interval = (self.training_params.val_check_interval-1)*self.training_params.gradient_accumulation_steps
+            val_check_interval = (self.training_params.val_check_interval)*self.training_params.gradient_accumulation_steps
             check_val_every_n_epoch=None
         elif self.training_params.evaluation_strategy == 'epoch':
             val_check_interval = None
             check_val_every_n_epoch=1
         
+        max_train_kwargs = {}
+        if self.training_params.max_train_steps is None:
+            max_train_steps = None
+            max_train_kwargs = {'max_epochs': self.training_params.max_train_epochs}
+        else:
+            max_train_steps = self.training_params.max_train_steps + (self.training_params.gradient_accumulation_steps * 2)
+            max_train_kwargs = {'max_steps': max_train_steps}
+
         precision = 32
         if self.training_params.bf16:
             precision = "bf16"
         elif self.training_params.fp16:
             precision = 16
         
+        #, max_steps=max_train_steps
         self.trainer = pl.Trainer(accelerator="auto", devices="auto", 
-                max_epochs=self.training_params.max_train_epochs, max_steps=self.training_params.max_train_steps,
+                **max_train_kwargs,
                 val_check_interval=val_check_interval,
                 accumulate_grad_batches=self.training_params.gradient_accumulation_steps,
                 check_val_every_n_epoch=check_val_every_n_epoch,
@@ -405,6 +418,16 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                 num_sanity_val_steps=2,
                 )
 
+    def model_vis(self):
+        #https://github.com/mert-kurttutan/torchview
+        from torchview import draw_graph
+
+        model_graph = draw_graph(
+            SimpleRNN(), input_size=(2, 3),
+            graph_name='RecursiveNet',
+            roll=True
+        )
+        model_graph.visual_graph        
 
     def lr_find(self,):
         self.create_trainer(mode = 'lr_find')

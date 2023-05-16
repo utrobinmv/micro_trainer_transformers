@@ -8,8 +8,9 @@ from .arguments import TrainingArguments
 class TrainigParameters:
     """Класс для параметров тренировки по умолчанию"""
     debug: bool = False
-    max_train_steps: int = 0
+    max_train_steps: Optional[int] = None
     max_train_epochs: Optional[int] = None #При None max_train_epochs = max_train_steps / val_check_interval
+    gradient_accumulation_steps: int = 1
     evaluation_strategy: str = 'steps' #'steps' or 'epoch'. Делать валидацию либо каждую эпоху или через val_check_interval шагов
     warmup_steps: Optional[int] = None
     val_check_interval: int = 0 #Использовать всегда, если evaluation_strategy, устанавливать как len(ds) / (batch_size * evaluation_strategy)
@@ -74,6 +75,9 @@ class TrainigParameters:
 
         #assert self.val_check_interval > 0 #Необходимо всегда установить val_check_interval
 
+        #TO DO
+        ########evaluation_strategy=<IntervalStrategy.STEPS: 'steps' ???
+
         if self.evaluation_strategy == 'epoch':
             if self.max_train_epochs is None:
                 self.max_train_epochs = round(self.max_train_steps / self.val_check_interval)
@@ -125,13 +129,20 @@ class TrainigParameters:
         if ta.lr_scheduler_type:
             self.lr_scheduler_type = ta.lr_scheduler_type._value_
         self.seed = ta.seed
-        if ta.metric_for_best_model:
-            self.metric_monitor_name = ta.metric_for_best_model
+
+        #Убрал так как метрика по умолчанию 'loss', а у меня 'valid_loss'
+        # if ta.metric_for_best_model: 
+        #     self.metric_monitor_name = ta.metric_for_best_model
 
         self.tf32 = ta.tf32
         self.bf16 = ta.bf16
         self.fp16 = ta.fp16
         
+        if ta.warmup_steps > 0:
+            self.warmup_steps = ta.warmup_steps
+        elif ta.warmup_ratio > 0:
+            self.warmup_steps = int(ta.max_steps * ta.warmup_ratio)
+
         if ta.greater_is_better:
             if ta.greater_is_better == True:
                 self.metric_monitor_mode = 'max'

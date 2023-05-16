@@ -103,3 +103,4 @@ dev.env
 examples/
 .vscode/
 micro_lightning/
+tests/

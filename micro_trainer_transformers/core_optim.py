@@ -315,8 +315,28 @@ class UniversalOptim: #(pl.LightningModule):
         elif name_sheduler == "ReduceLROnPlateau":
             #Для валидационных метрик работает только в режиме epoch. 
             #В режиме step можно запускать только для метрик трейн режима train_loss и др.
-            assert self.evaluation_strategy == 'epoch'
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, self.training_params.metric_monitor_mode, **self.training_params.lr_scheduler_kwargs)
+            
+            assert self.training_params.evaluation_strategy == 'epoch'
+            
+            assert self.training_params.lr_scheduler_interval == 'epoch'
+            
+            default_kwargs = {'factor': 0.5, 'patience': 2, 'verbose': True}
+            
+            if isinstance(self.training_params.lr_scheduler_kwargs, dict):
+                kwargs = self.training_params.lr_scheduler_kwargs
+                
+                #Перенесем defaul параметры если они недоступны
+                for key in default_kwargs.keys():
+                    if key not in kwargs:
+                        kwargs[key] = default_kwargs[key]
+                        print(f'Оптимизатор ReduceLROnPlateau перенесен аргумент {key}: ', default_kwargs[key])
+            
+            else:
+                kwargs = default_kwargs
+                print('Оптимизатор ReduceLROnPlateau перенесены аргументы по умолчанию: ', kwargs)
+            
+            #default 
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, self.training_params.metric_monitor_mode, **kwargs)
         elif name_sheduler == "OneCycleLR":
             scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, 
                 max_lr = self.training_params.learning_rate,

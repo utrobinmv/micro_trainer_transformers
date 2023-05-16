@@ -6,6 +6,9 @@ import random
 import json
 from json import JSONEncoder
 
+def division(a,b):
+    return a / b
+
 def current_time_in_second(): 
     #Возвращает время в секундах
     return round(time.time())
