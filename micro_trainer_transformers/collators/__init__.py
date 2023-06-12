@@ -1,0 +1,1 @@
+from .albert_collator import LM_DataCollatorForWholeWordMask

@@ -64,7 +64,9 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         
         self.pbar_train = tqdm(desc='Total training model',leave=True,position=2) 
         
-        self.train_mode_start = False 
+        self.train_mode_start = False
+        self.save_first_valid_batch = False
+        self.first_valid_batch = None
 
     def setup(self, stage=None):
         pass
@@ -294,6 +296,10 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         else:
             batch_size = len(batch["labels"])
             
+        if self.save_first_valid_batch:
+           self.first_valid_batch = batch
+           self.save_first_valid_batch = False
+            
         loss = self.common_step(batch, batch_idx, valid = True)
         
         self.log("valid_loss", loss, on_step=False, 
@@ -401,10 +407,20 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
             precision = "bf16"
         elif self.training_params.fp16:
             precision = 16
-        
+
+        if self.training_params.tf32:
+            torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
+            torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
+
+        if self.training_params.torch_compile:
+            print("compiling the model... (takes a ~minute)")
+            #unoptimized_model = model
+            self.model = torch.compile(self.model) # requires PyTorch 2.0            
+
         #, max_steps=max_train_steps
         self.trainer = pl.Trainer(accelerator="auto", devices="auto", 
                 **max_train_kwargs,
+                precision=precision,
                 val_check_interval=val_check_interval,
                 accumulate_grad_batches=self.training_params.gradient_accumulation_steps,
                 check_val_every_n_epoch=check_val_every_n_epoch,
@@ -418,18 +434,62 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                 num_sanity_val_steps=2,
                 )
 
-    def model_vis(self):
+    def model_vis_save(self):
+        '''
+        Сохраняет визуализацию сетки
+        '''
+        
+        self.create_trainer()
+        
+        self.trainer.num_sanity_val_steps = 0
+        self.trainer.limit_train_batches = 0
+        self.trainer.limit_val_batches = 1
+        
+        self.save_first_valid_batch = True
+        
+        self.trainer.validate(self,ckpt_path=None)
+        
         #https://github.com/mert-kurttutan/torchview
         from torchview import draw_graph
+        import os.path
 
-        model_graph = draw_graph(
-            SimpleRNN(), input_size=(2, 3),
-            graph_name='RecursiveNet',
-            roll=True
-        )
-        model_graph.visual_graph        
+        print('=======================')
+        print('Run save graph model:', self.training_params.path_log)
+        
+        old_size = 0
+        for depth in range(100):
+
+            save_name = 'model_'+self.training_params.model_master_name+'_depth_' + str(depth)
+
+            _ = draw_graph(
+                self.model, self.first_valid_batch,
+                graph_name=save_name,
+                depth=depth,
+                save_graph=True,
+                filename=self.training_params.path_log + save_name,
+            )
+
+            real_filename = self.training_params.path_log + save_name+'.png'
+
+            new_size = os.path.getsize(real_filename)
+
+            if new_size == old_size:
+                break
+
+            old_size = new_size
+            
+            print('Save graphviz: ',real_filename)  
 
     def lr_find(self,):
+        '''
+        Проводит поиск learning rate и возвращает оптимальное значение lr
+        
+        Кроме этого делает print
+        и сохраняет график поиска learning rate в папку self.training_params.path_log
+        
+        '''
+        
+        
         self.create_trainer(mode = 'lr_find')
         
         self.train_mode_start = False
@@ -438,8 +498,10 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         
         #print(lr_finder.results)
         
+        lr_recomend = lr_finder.suggestion()
+        
         print('=======================')
-        print('Recomended lr:', lr_finder.suggestion())
+        print('Recomended lr:', lr_recomend)
         
         fig = lr_finder.plot(suggest=True) # Plot
         fig.show()
@@ -448,6 +510,8 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         fig.savefig(save_log_filename) 
         
         print('Save image plot result to:', save_log_filename)
+        
+        return lr_recomend
         
     def fit(self,resume_from_checkpoint=None):
         

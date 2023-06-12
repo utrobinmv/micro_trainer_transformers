@@ -96,11 +96,3 @@ ENV/
 
 # mkdocs documentation
 /site
-
-#this project
-.netrc
-dev.env
-examples/
-.vscode/
-micro_lightning/
-tests/

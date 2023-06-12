@@ -59,11 +59,13 @@ class TrainigParameters:
     tf32: Optional[bool] = None #Включить ли режим tf32, доступный в Ampere и более новых архитектурах GPU. Это экспериментальный API, и он может измениться.
     bf16: bool = False #Использовать ли точность bf16 (смешанную) вместо 32-битной. Требуется архитектура NVIDIA Ampere или выше или использование процессора (no_cuda). Это экспериментальный API, и он может измениться.
     fp16: bool = False #Использовать ли точность fp16 (смешанную) вместо 32-битной
+    torch_compile: bool = False #If set to `True`, модель будет завернута в `torch.compile`.
 
     #project    
     project_name: str = 'debug_classificate'
     model_master_name: str = 'linear_simple'
     model_comment: str = ''
+    root_path_checkpoint = '/checkpoints'
 
     
     def __init__(self):
@@ -94,12 +96,12 @@ class TrainigParameters:
         self.version: str = time_in_second_to_textdate(self.run_time)
         self.model_name: str = self.model_master_name + '_'+ self.version + ('_debug' if self.debug else '')
         
-        self.path_checkpoint: str = '/checkpoints/' + self.project_name + '/' + \
+        self.path_checkpoint: str = self.root_path_checkpoint + '/' + self.project_name + '/' + \
             self.version + '_' + \
             self.model_master_name  + ('_debug' if self.debug else '') + '/' 
             
         self.path_log: str = self.path_checkpoint + 'logs/'
-        self.path_best_model: str = '/checkpoints/save_models/'
+        self.path_best_model: str = self.root_path_checkpoint + '/save_models/'
         pass
 
     def from_hf_training_arguments(self, project_name: str, model_master_name: str, ta: TrainingArguments):
@@ -137,6 +139,7 @@ class TrainigParameters:
         self.tf32 = ta.tf32
         self.bf16 = ta.bf16
         self.fp16 = ta.fp16
+        self.torch_compile = ta.torch_compile
         
         if ta.warmup_steps > 0:
             self.warmup_steps = ta.warmup_steps
