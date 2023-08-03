@@ -6,15 +6,35 @@ import random
 @dataclass
 class LM_DataCollatorForWholeWordMask(DataCollatorForWholeWordMask):
     '''
-    for run
+    Замена на mask токены целых слов, вместо отдельных токенов
+    
     data_collator = LM_DataCollatorForWholeWordMask(
         tokenizer=tokenizer, mlm=True, mlm_probability=0.1
     ) 
     '''
+    def set_param_diffusion(self, value_mask_token = 0.8, replace_tokens = 0.5):
+        # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
+        #Какой процент оставить без изменения на шум
+        #1.0 - шума нет (второй параметр ничего не меняет)
+        #0.8 - Шума 20% процентов (по умолчанию)
+        #0.5 - Шума 50%
+        #0.0 - Всё маскированные токены, заменяются на шум
+        self.value_mask_token = value_mask_token
+
+        # 10% of the time, we replace masked input tokens with random word
+        #Сколько из шумных токенов будут заменены на случайные токены, или вернуты на не маск
+        #1.0 - все зашумленные токены будут заменены на случайные
+        #0.5 - половина токенов маск будет заменена на случайные токены (по умолчанию)
+        #0.1 - практически все замаскированные токены останутся замаскированными
+        #0.0 - все замаскированные токены останутся замаскированными
+        
+        self.replace_tokens = replace_tokens
 
     def _whole_word_mask(self, input_tokens: List[str], max_predictions=512):
         """
         Get 0/1 labels for masked tokens with whole word mask proxy
+        input_tokens = построчно, токенизированный текст. Не батчем, а для каждого элемента
+        input_tokens == ['[CLS]', '▁Э', 'т', 'а', '▁х', 'а', 'р', 'а', 'к', 'т', 'е', 'р', 'и', 'с', ...]
         """
         # if not isinstance(self.tokenizer, (BertTokenizer, BertTokenizerFast)):
         #     warnings.warn(
@@ -62,6 +82,9 @@ class LM_DataCollatorForWholeWordMask(DataCollatorForWholeWordMask):
     def torch_mask_tokens(self, inputs: Any, special_tokens_mask: Optional[Any] = None) -> Tuple[Any, Any]:
         """
         Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original.
+        
+        inputs - входной батч. torch.Size([batch_size, 150])
+        
         """
         import torch
 
@@ -82,13 +105,13 @@ class LM_DataCollatorForWholeWordMask(DataCollatorForWholeWordMask):
         labels[~masked_indices] = -100  # We only compute loss on masked tokens
 
         # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
-        indices_replaced = torch.bernoulli(torch.full(labels.shape, 0.8)).bool() & masked_indices
+        indices_replaced = torch.bernoulli(torch.full(labels.shape, self.value_mask_token)).bool() & masked_indices
         inputs[indices_replaced] = self.tokenizer.convert_tokens_to_ids(self.tokenizer.mask_token)
 
         #print('Ok')
 
         # 10% of the time, we replace masked input tokens with random word
-        indices_random = torch.bernoulli(torch.full(labels.shape, 0.5)).bool() & masked_indices & ~indices_replaced
+        indices_random = torch.bernoulli(torch.full(labels.shape, self.replace_tokens)).bool() & masked_indices & ~indices_replaced
         random_words = torch.randint(len(self.tokenizer), labels.shape, dtype=torch.long)
         inputs[indices_random] = random_words[indices_random]
 

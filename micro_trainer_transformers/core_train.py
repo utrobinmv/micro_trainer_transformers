@@ -23,12 +23,15 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         train_dataset: datasets.Dataset,
         eval_dataset: datasets.Dataset,
         data_collator: Any = None,
+        optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
         compute_metrics: Any = None,
         
     ) -> None:
         super().__init__()
 
         self.trainer = None
+
+        self.optimizers = optimizers
 
         self.training_params = args
         
@@ -189,7 +192,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         return None
 
     def configure_optimizers(self):
-        return super().configure_optimizers_optim()
+        return super().configure_optimizers_optim(self.optimizers)
 
     def on_load_checkpoint(self, checkpoint):
         self.dataset_start_epoch_data_iter = checkpoint['dataset_start_epoch_data_iter']

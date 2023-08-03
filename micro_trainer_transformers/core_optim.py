@@ -287,61 +287,66 @@ class UniversalOptim: #(pl.LightningModule):
         
         self.training_params:TrainigParameters = None
     
-    def configure_optimizers_optim(self):
+    def configure_optimizers_optim(self, optimizers):
 
         num_warmup_steps: Optional[int] = self.training_params.warmup_steps
         num_training_steps: Optional[int] = self.training_params.max_train_steps
-        
-        optimizer = torch.optim.AdamW(self.model.parameters(), 
-                lr = self.training_params.learning_rate,
-                weight_decay = self.training_params.weight_decay, 
-                eps = self.training_params.eps)
 
-        name_sheduler = self.training_params.lr_scheduler_type
-        if name_sheduler == 'constant':
-            scheduler = get_constant_schedule(optimizer)
-        elif name_sheduler == "constant_with_warmup":
-            scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps)
-        elif name_sheduler == "inverse_sqrt":
-            scheduler = get_inverse_sqrt_schedule(optimizer, num_warmup_steps=num_warmup_steps)
-        elif name_sheduler == "linear":
-            scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
-        elif name_sheduler == "cosine":
-            scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
-        elif name_sheduler == "cosine_with_restarts":
-            scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
-        elif name_sheduler == "polynomial":
-            scheduler = get_polynomial_decay_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
-        elif name_sheduler == "ReduceLROnPlateau":
-            #Для валидационных метрик работает только в режиме epoch. 
-            #В режиме step можно запускать только для метрик трейн режима train_loss и др.
-            
-            assert self.training_params.evaluation_strategy == 'epoch'
-            
-            assert self.training_params.lr_scheduler_interval == 'epoch'
-            
-            default_kwargs = {'factor': 0.5, 'patience': 2, 'verbose': True}
-            
-            if isinstance(self.training_params.lr_scheduler_kwargs, dict):
-                kwargs = self.training_params.lr_scheduler_kwargs
+        optimizer, scheduler = optimizers
+
+        if optimizer is None:
+            optimizer = torch.optim.AdamW(self.model.parameters(), 
+                    lr = self.training_params.learning_rate,
+                    weight_decay = self.training_params.weight_decay, 
+                    eps = self.training_params.eps)
+
+        if scheduler is None:
+
+            name_sheduler = self.training_params.lr_scheduler_type
+            if name_sheduler == 'constant':
+                scheduler = get_constant_schedule(optimizer)
+            elif name_sheduler == "constant_with_warmup":
+                scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps)
+            elif name_sheduler == "inverse_sqrt":
+                scheduler = get_inverse_sqrt_schedule(optimizer, num_warmup_steps=num_warmup_steps)
+            elif name_sheduler == "linear":
+                scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
+            elif name_sheduler == "cosine":
+                scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
+            elif name_sheduler == "cosine_with_restarts":
+                scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
+            elif name_sheduler == "polynomial":
+                scheduler = get_polynomial_decay_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
+            elif name_sheduler == "ReduceLROnPlateau":
+                #Для валидационных метрик работает только в режиме epoch. 
+                #В режиме step можно запускать только для метрик трейн режима train_loss и др.
                 
-                #Перенесем defaul параметры если они недоступны
-                for key in default_kwargs.keys():
-                    if key not in kwargs:
-                        kwargs[key] = default_kwargs[key]
-                        print(f'Оптимизатор ReduceLROnPlateau перенесен аргумент {key}: ', default_kwargs[key])
-            
-            else:
-                kwargs = default_kwargs
-                print('Оптимизатор ReduceLROnPlateau перенесены аргументы по умолчанию: ', kwargs)
-            
-            #default 
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, self.training_params.metric_monitor_mode, **kwargs)
-        elif name_sheduler == "OneCycleLR":
-            scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, 
-                max_lr = self.training_params.learning_rate,
-                total_steps=self.training_params.max_train_steps,
-                pct_start=0.1)
+                assert self.training_params.evaluation_strategy == 'epoch'
+                
+                assert self.training_params.lr_scheduler_interval == 'epoch'
+                
+                default_kwargs = {'factor': 0.5, 'patience': 2, 'verbose': True}
+                
+                if isinstance(self.training_params.lr_scheduler_kwargs, dict):
+                    kwargs = self.training_params.lr_scheduler_kwargs
+                    
+                    #Перенесем defaul параметры если они недоступны
+                    for key in default_kwargs.keys():
+                        if key not in kwargs:
+                            kwargs[key] = default_kwargs[key]
+                            print(f'Оптимизатор ReduceLROnPlateau перенесен аргумент {key}: ', default_kwargs[key])
+                
+                else:
+                    kwargs = default_kwargs
+                    print('Оптимизатор ReduceLROnPlateau перенесены аргументы по умолчанию: ', kwargs)
+                
+                #default 
+                scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, self.training_params.metric_monitor_mode, **kwargs)
+            elif name_sheduler == "OneCycleLR":
+                scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, 
+                    max_lr = self.training_params.learning_rate,
+                    total_steps=self.training_params.max_train_steps,
+                    pct_start=0.1)
 
         return (
             [optimizer],
