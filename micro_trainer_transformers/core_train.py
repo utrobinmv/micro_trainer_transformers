@@ -9,6 +9,8 @@ from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 
 import datasets
+from datasets.iterable_dataset import IterableDataset
+
 import pytorch_lightning as pl
 
 from micro_trainer_transformers import TrainigParameters
@@ -43,14 +45,28 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
             self.dataset_train_size_count = 0 #Подсчет размера итеративного датасета
             self.dataset_train_iter = iter(self.dataset_train)
         else:
-            self.dataset_train_size = len(self.dataset_train)
+            if isinstance(self.dataset_train, IterableDataset):
+                #train_dataloader.dataset.set_epoch(args.current_epoch)
+                self.dataset_train_size = self.training_params.batch_size * self.training_params.val_check_interval
+                self._dataloader_current_epoch = 1 #Это не настоящий номер эпохи, это скорее то, сколько раз вызывается даталоадер
+                assert self.dataset_train.n_shards >= self.training_params.num_workers
+                
+                if self.training_params.data_train_shuffle:
+                    self.training_params.data_train_shuffle = False
+                    print(' === Change option data_train_shuffle, for IterableDataset not use option shuffle.')
+                
+            else:
+                self.dataset_train_size = len(self.dataset_train)
 
         if self.training_params.data_streaming_valid:
             self.dataset_valid_size = 0
             self.dataset_valid_size_count = 0 #Подсчет размера итеративного датасета
             self.dataset_valid_iter = iter(self.dataset_valid)
         else:
-            self.dataset_valid_size = len(self.dataset_valid)
+            if isinstance(self.dataset_valid, IterableDataset):
+                self.dataset_valid_size = 0
+            else:
+                self.dataset_valid_size = len(self.dataset_valid)
         self.dataloader_valid = None
         self.dataset_total_batches = 0
         
@@ -136,6 +152,11 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
             data_buffer = self.data_buffer_train
             
         else:
+            if isinstance(self.dataset_train, IterableDataset):
+                self.dataset_train.set_epoch(self._dataloader_current_epoch)
+                self._dataloader_current_epoch += 1
+                #buffer_size = self.training_params.batch_size * self.training_params.val_check_interval * self.training_params.gradient_accumulation_steps
+                
             data_buffer = self.dataset_train 
             
         return DataLoader(data_buffer, 
@@ -351,7 +372,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                                             version = '',
                                             ))
         
-        if not self.training_params.debug and mode == 'train':
+        if self.training_params.wandb and mode == 'train':
             
             wandb_logger = pl.loggers.WandbLogger(name = self.training_params.model_name,
                                                 project = self.training_params.project_name,
@@ -393,7 +414,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         if self.training_params.evaluation_strategy == 'steps':
             val_check_interval = (self.training_params.val_check_interval)*self.training_params.gradient_accumulation_steps
             check_val_every_n_epoch=None
-        elif self.training_params.evaluation_strategy == 'epoch':
+        else: #if self.training_params.evaluation_strategy == 'epoch':
             val_check_interval = None
             check_val_every_n_epoch=1
         

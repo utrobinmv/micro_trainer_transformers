@@ -7,7 +7,7 @@ from .arguments import TrainingArguments
 @dataclass
 class TrainigParameters:
     """Класс для параметров тренировки по умолчанию"""
-    debug: bool = False
+    wandb: bool = False
     max_train_steps: Optional[int] = None
     max_train_epochs: Optional[int] = None #При None max_train_epochs = max_train_steps / val_check_interval
     gradient_accumulation_steps: int = 1
@@ -94,11 +94,11 @@ class TrainigParameters:
         #not edit
         self.run_time: int = current_time_in_second()
         self.version: str = time_in_second_to_textdate(self.run_time)
-        self.model_name: str = self.model_master_name + '_'+ self.version + ('_debug' if self.debug else '')
+        self.model_name: str = self.model_master_name + '_'+ self.version # + ('_debug' if self.debug else '')
         
         self.path_checkpoint: str = self.root_path_checkpoint + '/' + self.project_name + '/' + \
             self.version + '_' + \
-            self.model_master_name  + ('_debug' if self.debug else '') + '/' 
+            self.model_master_name  + '/' #+ ('_debug' if self.debug else '') + '/' 
             
         self.path_log: str = self.path_checkpoint + 'logs/'
         self.path_best_model: str = self.root_path_checkpoint + '/save_models/'
