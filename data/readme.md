@@ -1,0 +1,3 @@
+{'loss': 1.7933, 'learning_rate': 0.01012500000000001, 'epoch': 1.08}               
+{'eval_Chrf': 55.9185, 'eval_loss': 1.5371654033660889, 'eval_rouge1': 66.335, 'eval_rouge2': 40.2665, 'eval_rougeL': 61.9062, 'eval_rougeLsum': 63.9202, 'eval_sacrebleu': 29.0767, 'eval_ppl_ru': 1.0724, 'eval_ppl_en': 1.059, 'eval_ppl_zh': 1.7304, 'eval_ppl': 1.232, 'eval_runtime': 1365.4906, 'eval_samples_per_second': 8.672, 'eval_steps_per_second': 0.543, 'epoch': 1.08}
+{'train_runtime': 6883.9111, 'train_samples_per_second': 1.892, 'train_steps_per_second': 0.004, 'train_loss': 1.8238460696660554, 'epoch': 1.12}
