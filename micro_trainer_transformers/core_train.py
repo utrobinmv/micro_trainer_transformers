@@ -2,19 +2,24 @@ from typing import Any, Callable, Dict, NewType, Union, List, Optional, Tuple
 
 from tqdm.auto import tqdm
 
+import pandas as pd
+
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
+from torch.cuda.amp import GradScaler, autocast
 
 import datasets
 from datasets.iterable_dataset import IterableDataset
 
 import pytorch_lightning as pl
+from pytorch_lightning.trainer import Trainer
 
 from micro_trainer_transformers import TrainigParameters
 from .utils import time_in_second_hms, make_dirs, set_seed, save_useful_info
+from .utils import in_jupyter_notebook
 from .core_optim import UniversalOptim
 
 class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
@@ -31,7 +36,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
     ) -> None:
         super().__init__()
 
-        self.trainer = None
+        self.m_trainer = None
 
         self.optimizers = optimizers
 
@@ -86,6 +91,11 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         self.train_mode_start = False
         self.save_first_valid_batch = False
         self.first_valid_batch = None
+
+        #Аккумулирование шагов лоса, чтобы в конце эпохи получить среднюю метрику
+        self.epoch_train_logs = []
+        self.epoch_valid_logs = []
+        self.epoch_valid_list_dict_result = []
 
     def setup(self, stage=None):
         pass
@@ -276,6 +286,8 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
     def common_step(self, batch: Dict[str, torch.LongTensor], batch_idx: int, valid: bool = False) -> torch.Tensor:
                
         if self.training_params.loss_fn_in_model:
+            
+
             preds = self.model(**batch)
             loss = preds.loss
             
@@ -308,7 +320,9 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         self.log("training_loss", loss, on_step=True, 
                  on_epoch=True, prog_bar=False, 
                  batch_size=batch_size)
-             
+        
+        self.epoch_train_logs.append({'training_loss': loss.detach().cpu().numpy()})
+
         return loss
 
     def validation_step(
@@ -330,24 +344,62 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                  on_epoch=True, prog_bar=True, 
                  batch_size=batch_size)
 
+        self.epoch_valid_logs.append({'valid_loss': loss.detach().cpu().numpy()})
+
+    def on_train_epoch_start(self):
+        self.epoch_train_logs.clear()
+
     def on_validation_epoch_start(self):
         self.validate_labels = []
         self.validate_predictions = []
+        self.epoch_valid_logs.clear()
         
         pass
 
     def on_validation_epoch_end(self):
+
+        #Соберем логи по тренировке и валидации
+        #current_step = self.trainer.num_training_batches
+        current_step: int = self.trainer.global_step
+        dict_result = {}
+        dict_result['step'] = current_step
+
+        if len(self.epoch_train_logs) > 0:
+            df = pd.DataFrame(self.epoch_train_logs)
+            dict_result.update(dict(df.sum() / len(df)))
+        
+        if 'training_loss' not in dict_result.keys():
+            dict_result['training_loss'] = 0.0
+
+        if len(self.epoch_valid_logs) > 0:
+            df = pd.DataFrame(self.epoch_valid_logs)
+            dict_result.update(dict(df.sum() / len(df)))
+
         if self.compute_metrics_fn:            
             
+            predictions = self.validate_predictions
+            predictions = [value.argmax(1) for value in predictions]
+
+
             result_dict = self.compute_metrics_fn(
-                (pad_sequence(self.validate_predictions, batch_first=True, padding_value=-100), 
+                (pad_sequence(predictions, batch_first=True, padding_value=-100), 
                  pad_sequence(self.validate_labels, batch_first=True, padding_value=-100))
                 )
             #result_dict = self.compute_metrics_fn((torch.vstack(self.validate_predictions), torch.vstack(self.validate_labels)))
 
             if len(result_dict.keys()) > 0:
+                dict_result.update(result_dict)
                 self.log_dict(result_dict, on_step=False, on_epoch=True, prog_bar=False)
-            
+
+        if len(dict_result.keys()) > 0:
+            self.epoch_valid_list_dict_result.append(dict_result)    
+            if in_jupyter_notebook():
+                from IPython.display import display, HTML
+                pd.set_option('display.max_rows', None)
+                df = pd.DataFrame(self.epoch_valid_list_dict_result)
+                display(df)
+            else:
+                print(self.epoch_valid_list_dict_result[-1])
         pass
 
 
@@ -394,6 +446,10 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                                                     mode=self.training_params.metric_monitor_mode,
                                                     )
 
+        # plugins: list = []
+        # if self.training_params.fp16:
+        #     plugins.append(pl.plugins.precision.NativeMixedPrecisionPlugin(16,'cuda',GradScaler()))
+
         callbacks = []
         callbacks.append(pl.callbacks.LearningRateMonitor(logging_interval='step'))
         callbacks.append(pl.callbacks.TQDMProgressBar())
@@ -419,9 +475,16 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
             check_val_every_n_epoch=1
         
         max_train_kwargs = {}
-        if self.training_params.max_train_steps is None:
-            max_train_steps = None
-            max_train_kwargs = {'max_epochs': self.training_params.max_train_epochs}
+        if self.training_params.max_train_steps is None or self.training_params.max_train_steps == -1:
+            if self.training_params.max_train_epochs is not None and self.training_params.max_train_epochs > 0 and int(self.training_params.max_train_epochs) != self.training_params.max_train_epochs:
+
+                one_epoch_steps: float = (len(self.train_dataloader()) / self.training_params.gradient_accumulation_steps)
+                self.training_params.max_train_epochs = self.training_params.max_train_epochs
+                self.training_params.max_train_steps = int(one_epoch_steps * self.training_params.max_train_epochs)
+                max_train_kwargs: dict[str, float] = {'max_steps': self.training_params.max_train_steps}
+            else:
+                max_train_steps = None
+                max_train_kwargs = {'max_epochs': self.training_params.max_train_epochs}
         else:
             max_train_steps = self.training_params.max_train_steps + (self.training_params.gradient_accumulation_steps * 2)
             max_train_kwargs = {'max_steps': max_train_steps}
@@ -442,7 +505,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
             self.model = torch.compile(self.model) # requires PyTorch 2.0            
 
         #, max_steps=max_train_steps
-        self.trainer = pl.Trainer(accelerator="auto", devices="auto", 
+        self.m_trainer = pl.Trainer(accelerator="auto", devices="auto", 
                 **max_train_kwargs,
                 precision=precision,
                 val_check_interval=val_check_interval,
@@ -452,9 +515,11 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                 logger=loggers,
                 gradient_clip_val=self.training_params.max_grad_norm,
                 callbacks=callbacks,
+                # plugins=plugins,
                 reload_dataloaders_every_n_epochs = 1 if self.training_params.data_streaming_train else 0,
                 limit_val_batches = self.training_params.limit_val_batches,
                 log_every_n_steps = self.training_params.log_every_n_steps,
+                # amp_backend="apex",
                 num_sanity_val_steps=2,
                 )
 
@@ -465,13 +530,13 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         
         self.create_trainer()
         
-        self.trainer.num_sanity_val_steps = 0
-        self.trainer.limit_train_batches = 0
-        self.trainer.limit_val_batches = 1
+        self.m_trainer.num_sanity_val_steps = 0
+        self.m_trainer.limit_train_batches = 0
+        self.m_trainer.limit_val_batches = 1
         
         self.save_first_valid_batch = True
         
-        self.trainer.validate(self,ckpt_path=None)
+        self.m_trainer.validate(self,ckpt_path=None)
         
         #https://github.com/mert-kurttutan/torchview
         from torchview import draw_graph
@@ -518,7 +583,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         
         self.train_mode_start = False
         
-        lr_finder = self.trainer.tuner.lr_find(self, self.train_dataloader())
+        lr_finder = self.m_trainer.tuner.lr_find(self, self.train_dataloader())
         
         #print(lr_finder.results)
         
@@ -541,9 +606,9 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         
         self.create_trainer()
 
-        save_useful_info(self.training_params.path_log,self.model,self.training_params.__dict__, self.trainer.__dict__)
+        save_useful_info(self.training_params.path_log,self.model,self.training_params.__dict__, self.m_trainer.__dict__)
 
-        self.trainer.fit(self,ckpt_path=resume_from_checkpoint)
+        self.m_trainer.fit(self,ckpt_path=resume_from_checkpoint)
         
         print('Best model path:', self.checkpoint_callback.best_model_path)
         print(' --- model score:', self.checkpoint_callback.best_model_score)

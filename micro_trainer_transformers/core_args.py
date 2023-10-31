@@ -26,7 +26,7 @@ class TrainigParameters:
     #data
     batch_size: int = 2
     evaluation_strategy: int = 1
-    data_train_shuffle: bool = True
+    data_train_shuffle: bool = False
     data_streaming_train: bool = False
     data_streaming_train_iter_replace: bool = True #Не завершать эпоху по окончанию итеративного датасета, а перезапускать заново!
     data_streaming_valid: bool = False
@@ -85,8 +85,10 @@ class TrainigParameters:
                 self.max_train_epochs = round(self.max_train_steps / self.val_check_interval)
                 self.max_train_steps = self.val_check_interval * self.max_train_epochs #Пересчитаем до полного числа эпох
         elif self.evaluation_strategy == 'steps':
-            if self.max_train_steps is None:
-                self.max_train_steps = self.val_check_interval * self.max_train_epochs #Пересчитаем до полного числа эпох
+            # Считаю эту строку неверной, так как количество шагов определяется от размера датасета
+            # if self.max_train_steps is None or self.max_train_steps == -1:
+            #     self.max_train_steps = self.val_check_interval * self.max_train_epochs #Пересчитаем до полного числа эпох
+            pass
         pass
 
 
@@ -125,6 +127,7 @@ class TrainigParameters:
         self.evaluation_strategy = ta.evaluation_strategy
         self.learning_rate = ta.learning_rate
         self.max_train_steps = ta.max_steps
+        self.max_train_epochs = ta.num_train_epochs
         self.batch_size = ta.per_device_train_batch_size
         self.gradient_accumulation_steps = ta.gradient_accumulation_steps
         self.val_check_interval = ta.eval_steps
