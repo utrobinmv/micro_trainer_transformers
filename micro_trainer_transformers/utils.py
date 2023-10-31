@@ -50,6 +50,9 @@ def save_str_to_file(filename:str, str_text: str) -> None:
     my_file.write(str_text)
     my_file.close()  
 
+def in_jupyter_notebook():
+    import __main__ as main
+    return not hasattr(main, '__file__')
 
 def save_useful_info(log_dir, model, params:dict, pl_params:dict):
     
