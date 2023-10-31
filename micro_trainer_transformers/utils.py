@@ -55,11 +55,23 @@ def in_jupyter_notebook():
     return not hasattr(main, '__file__')
 
 def save_useful_info(log_dir, model, params:dict, pl_params:dict):
+    def remove_non_primitive_types(dictionary):
+        primitive_types = (int, float, str, bool)
+
+        for key in dictionary.keys():
+            value = dictionary[key]
+            if not any(isinstance(value, t) for t in primitive_types):
+                dictionary[key] = str(dictionary[key])
+
+        return dictionary
     
     save_str_to_file(f'{log_dir}/model.txt',str(model))
+
+    save_params = params.copy()
+    save_params = remove_non_primitive_types(save_params)
     
     with open(f'{log_dir}/params.json', 'w') as fp:
-        json.dump(params, fp, indent=4)    
+        json.dump(save_params, fp, indent=4)    
 
     class CustomEncoder(json.JSONEncoder):
         def default(self, o):
