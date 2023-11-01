@@ -25,7 +25,7 @@ class TrainigParameters:
 
     #data
     batch_size: int = 2
-    evaluation_strategy: int = 1
+    #evaluation_strategy: int = 1 #Странная строка, вероятно здесь должна быть другая переменная?
     data_train_shuffle: bool = False
     data_streaming_train: bool = False
     data_streaming_train_iter_replace: bool = True #Не завершать эпоху по окончанию итеративного датасета, а перезапускать заново!
@@ -67,6 +67,8 @@ class TrainigParameters:
     model_comment: str = ''
     root_path_checkpoint = '/checkpoints'
 
+    #local trainer
+    local_trainer: bool = False
     
     def __init__(self):
         

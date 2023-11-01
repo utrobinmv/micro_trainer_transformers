@@ -268,7 +268,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                 if self.dataset_train_size > 0:
                     self.dataset_total_batches = self.dataset_train_size / (self.training_params.batch_size * self.training_params.gradient_accumulation_steps)
             else:                        
-                data_epoch = self.global_step / self.dataset_total_batches
+                data_epoch = self.m_trainer.global_step / self.dataset_total_batches
                 desc_str += f'. Epoch {data_epoch:.2f}'
                 
             self.pbar_train.set_description(desc_str)
@@ -360,7 +360,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
 
         #Соберем логи по тренировке и валидации
         #current_step = self.trainer.num_training_batches
-        current_step: int = self.trainer.global_step
+        current_step: int = self.m_trainer.global_step
         dict_result = {}
         dict_result['step'] = current_step
 
@@ -411,64 +411,70 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
             torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
             torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
         
+        use_pl_trainer = not self.training_params.local_trainer
+
         loggers = []
         
         make_dirs(self.training_params.path_log + 'wandb/')
-        
-        loggers.append(pl.loggers.TensorBoardLogger(save_dir = self.training_params.path_log + 'tensorboard',
-                                            name = None,
-                                            version = '',
-                                            ))
-        loggers.append(pl.loggers.CSVLogger(save_dir = self.training_params.path_log + 'csv_log',
-                                            name = None,
-                                            version = '',
-                                            ))
-        
-        if self.training_params.wandb and mode == 'train':
             
-            wandb_logger = pl.loggers.WandbLogger(name = self.training_params.model_name,
-                                                project = self.training_params.project_name,
-                                                version = self.training_params.version, 
-                                                save_dir=self.training_params.path_log,
-                                                log_model=True)
+        if use_pl_trainer:
+
+            loggers.append(pl.loggers.TensorBoardLogger(save_dir = self.training_params.path_log + 'tensorboard',
+                                                name = None,
+                                                version = '',
+                                                ))
+            loggers.append(pl.loggers.CSVLogger(save_dir = self.training_params.path_log + 'csv_log',
+                                                name = None,
+                                                version = '',
+                                                ))
             
-            loggers.append(wandb_logger)
-            
-            #log gradients, parameter histogram and model topology (100 steps by default)
-            wandb_logger.watch(self.model, log="all", log_freq=100)
-
-
-        self.checkpoint_callback = pl.callbacks.ModelCheckpoint(monitor=self.training_params.metric_monitor_name, 
-                                                    save_top_k=self.training_params.save_total_limit, 
-                                                    save_last=True, 
-                                                    dirpath = self.training_params.path_checkpoint,
-                                                    filename = '{epoch}_{step}-{'+f'{self.training_params.metric_monitor_name}'+':.6f}',
-                                                    mode=self.training_params.metric_monitor_mode,
-                                                    )
-
-        # plugins: list = []
-        # if self.training_params.fp16:
-        #     plugins.append(pl.plugins.precision.NativeMixedPrecisionPlugin(16,'cuda',GradScaler()))
-
-        callbacks = []
-        callbacks.append(pl.callbacks.LearningRateMonitor(logging_interval='step'))
-        callbacks.append(pl.callbacks.TQDMProgressBar())
-        callbacks.append(pl.callbacks.ModelSummary(max_depth=2))
-        # callbacks.append(pl.callbacks.OnExceptionCheckpoint(dirpath=self.training_params.path_checkpoint,
-        #                                                     filename='exception'))
-        callbacks.append(self.checkpoint_callback)
-        
-        if self.training_params.evaluation_strategy == 'epoch':
-            if self.training_params.early_stopping_patience:
-                callbacks.append(pl.callbacks.EarlyStopping(patience=self.training_params.early_stopping_patience,min_delta=0.001,
-                                                            mode=self.training_params.metric_monitor_mode,
-                                                            monitor=self.training_params.metric_monitor_name,
-                                                            verbose=True))
+            if self.training_params.wandb and mode == 'train':
                 
+                wandb_logger = pl.loggers.WandbLogger(name = self.training_params.model_name,
+                                                    project = self.training_params.project_name,
+                                                    version = self.training_params.version, 
+                                                    save_dir=self.training_params.path_log,
+                                                    log_model=True)
                 
-        
+                loggers.append(wandb_logger)
+                
+                #log gradients, parameter histogram and model topology (100 steps by default)
+                wandb_logger.watch(self.model, log="all", log_freq=100)
+
+
+            self.checkpoint_callback = pl.callbacks.ModelCheckpoint(monitor=self.training_params.metric_monitor_name, 
+                                                        save_top_k=self.training_params.save_total_limit, 
+                                                        save_last=True, 
+                                                        dirpath = self.training_params.path_checkpoint,
+                                                        filename = '{epoch}_{step}-{'+f'{self.training_params.metric_monitor_name}'+':.6f}',
+                                                        mode=self.training_params.metric_monitor_mode,
+                                                        )
+        if use_pl_trainer:
+
+            # plugins: list = []
+            # if self.training_params.fp16:
+            #     plugins.append(pl.plugins.precision.NativeMixedPrecisionPlugin(16,'cuda',GradScaler()))
+
+            callbacks = []
+            callbacks.append(pl.callbacks.LearningRateMonitor(logging_interval='step'))
+            callbacks.append(pl.callbacks.TQDMProgressBar())
+            callbacks.append(pl.callbacks.ModelSummary(max_depth=2))
+            # callbacks.append(pl.callbacks.OnExceptionCheckpoint(dirpath=self.training_params.path_checkpoint,
+            #                                                     filename='exception'))
+            callbacks.append(self.checkpoint_callback)
+            
+            if self.training_params.evaluation_strategy == 'epoch':
+                if self.training_params.early_stopping_patience:
+                    callbacks.append(pl.callbacks.EarlyStopping(patience=self.training_params.early_stopping_patience,min_delta=0.001,
+                                                                mode=self.training_params.metric_monitor_mode,
+                                                                monitor=self.training_params.metric_monitor_name,
+                                                                verbose=True))
+                
         if self.training_params.evaluation_strategy == 'steps':
-            val_check_interval = (self.training_params.val_check_interval)*self.training_params.gradient_accumulation_steps
+            if use_pl_trainer:
+                val_check_interval = (self.training_params.val_check_interval)*self.training_params.gradient_accumulation_steps
+            else:
+                val_check_interval = self.training_params.val_check_interval
             check_val_every_n_epoch=None
         else: #if self.training_params.evaluation_strategy == 'epoch':
             val_check_interval = None
@@ -486,7 +492,11 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                 max_train_steps = None
                 max_train_kwargs = {'max_epochs': self.training_params.max_train_epochs}
         else:
-            max_train_steps = self.training_params.max_train_steps + (self.training_params.gradient_accumulation_steps * 2)
+            if use_pl_trainer:
+                #Какой то косяк в pytorch lightning Приходится добавлять несколько заключительных шагов
+                max_train_steps = self.training_params.max_train_steps + (self.training_params.gradient_accumulation_steps * 2)
+            else:
+                max_train_steps = self.training_params.max_train_steps
             max_train_kwargs = {'max_steps': max_train_steps}
 
         precision = 32
@@ -504,24 +514,38 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
             #unoptimized_model = model
             self.model = torch.compile(self.model) # requires PyTorch 2.0            
 
-        #, max_steps=max_train_steps
-        self.m_trainer = pl.Trainer(accelerator="auto", devices="auto", 
-                **max_train_kwargs,
-                precision=precision,
-                val_check_interval=val_check_interval,
-                accumulate_grad_batches=self.training_params.gradient_accumulation_steps,
-                check_val_every_n_epoch=check_val_every_n_epoch,
-                default_root_dir=self.training_params.path_best_model,
-                logger=loggers,
-                gradient_clip_val=self.training_params.max_grad_norm,
-                callbacks=callbacks,
-                # plugins=plugins,
-                reload_dataloaders_every_n_epochs = 1 if self.training_params.data_streaming_train else 0,
-                limit_val_batches = self.training_params.limit_val_batches,
-                log_every_n_steps = self.training_params.log_every_n_steps,
-                # amp_backend="apex",
-                num_sanity_val_steps=2,
-                )
+                        
+        if use_pl_trainer:
+
+            #, max_steps=max_train_steps
+            self.m_trainer = pl.Trainer(accelerator="auto", devices="auto", 
+                    **max_train_kwargs,
+                    precision=precision,
+                    val_check_interval=val_check_interval,
+                    accumulate_grad_batches=self.training_params.gradient_accumulation_steps,
+                    check_val_every_n_epoch=check_val_every_n_epoch,
+                    default_root_dir=self.training_params.path_best_model,
+                    logger=loggers,
+                    gradient_clip_val=self.training_params.max_grad_norm,
+                    callbacks=callbacks,
+                    # plugins=plugins,
+                    reload_dataloaders_every_n_epochs = 1 if self.training_params.data_streaming_train else 0,
+                    limit_val_batches = self.training_params.limit_val_batches,
+                    log_every_n_steps = self.training_params.log_every_n_steps,
+                    # amp_backend="apex",
+                    num_sanity_val_steps=2,
+                    )
+            
+        else:
+
+            from micro_trainer_transformers.core_trainer import LocalTrainer
+            self.m_trainer = LocalTrainer(**max_train_kwargs,
+                    accumulate_grad_batches=self.training_params.gradient_accumulation_steps,
+                    device='cuda',precision=precision,
+                    gradient_clip_val=self.training_params.max_grad_norm,
+                    val_check_interval=val_check_interval,
+                    path_log=self.training_params.path_log)
+
 
     def model_vis_save(self):
         '''
@@ -610,6 +634,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
 
         self.m_trainer.fit(self,ckpt_path=resume_from_checkpoint)
         
-        print('Best model path:', self.checkpoint_callback.best_model_path)
-        print(' --- model score:', self.checkpoint_callback.best_model_score)
+        if not self.training_params.local_trainer:
+            print('Best model path:', self.checkpoint_callback.best_model_path)
+            print(' --- model score:', self.checkpoint_callback.best_model_score)
         
