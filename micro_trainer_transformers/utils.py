@@ -34,13 +34,15 @@ def set_seed(seed: int = 777, precision: int = 10) -> None:
     # torch.cuda.manual_seed_all(seed)
     torch.set_printoptions(precision=precision)
 
-def make_dirs(path):
+def make_dirs(path,silent=False):
     try:
         os.makedirs(path)
     except OSError:
-        print ("Создать директорию %s не удалось" % path)
+        if not silent:
+            print ("Создать директорию %s не удалось" % path)
     else:
-        print ("Успешно создана директория %s " % path)
+        if not silent:        
+            print ("Успешно создана директория %s " % path)
 
 def save_str_to_file(filename:str, str_text: str) -> None:
     '''

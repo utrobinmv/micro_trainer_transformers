@@ -1,9 +1,12 @@
 from contextlib import nullcontext
 from tqdm.auto import tqdm
 import os
+import pickle
 import torch
 
 from torch.utils.tensorboard import SummaryWriter
+
+from .utils import make_dirs
 
 class LocalDataModule:
     def __init__(self, mode, model):
@@ -41,7 +44,8 @@ class LocalTrainer:
                  precision=None,
                  gradient_clip_val=0.0,
                  val_check_interval=None,
-                 path_log=None):
+                 path_log=None,
+                 path_checkpoints=None):
         self.max_epochs = max_epochs
         self.max_steps = max_steps
 
@@ -78,6 +82,8 @@ class LocalTrainer:
         if not path_log is None:
             self.logger_tb = SummaryWriter(os.path.join(path_log,'tensorboard'))
 
+        self.path_checkpoints = path_checkpoints
+
         pass
 
     def batch_to_device(self, batch):
@@ -89,18 +95,16 @@ class LocalTrainer:
         return batch
 
 
-    def validate(self, model):
+    def validate(self, pl_model):
         '''validate'''
-        model.eval()
+        pl_model.eval()
         torch.set_grad_enabled(False)
 
-        model.on_validation_epoch_start()
-
+        pl_model.on_validation_epoch_start()
         for batch_idx, batch in enumerate(tqdm(self.dm.dl_valid,desc='eval')):
             batch = self.batch_to_device(batch)
-            model.validation_step(batch,batch_idx=batch_idx)
-
-        model.on_validation_epoch_end()
+            pl_model.validation_step(batch,batch_idx=batch_idx)
+        pl_model.on_validation_epoch_end()
 
         torch.set_grad_enabled(True)
 
@@ -120,28 +124,42 @@ class LocalTrainer:
         for key in metric_dict.keys():
             self.log(key, metric_dict[key], **kwargs)
 
-    def fit(self, model=None, ckpt_path=None):
-        print("FIT FIT FIT")
-        print(model)
-        print("FIT FIT FIT")
+    def save_checkpoint(self,pl_model,optimizers,lr_shedulers,current_step,current_epoch):
 
+        if not self.path_checkpoints is None:
+            folder_name = f'checkpoint_{current_step:08}'
+            folder_name = os.path.join(self.path_checkpoints,folder_name)
+            make_dirs(folder_name, silent=True)
+            torch.save(pl_model.model.state_dict(), os.path.join(folder_name,'model.pt')) 
+            chk_dict = {}
+            chk_dict['optimizers'] = optimizers
+            chk_dict['lr_shedulers'] = lr_shedulers
+            chk_dict['current_step'] = current_step
+            chk_dict['current_epoch'] = current_epoch
+            pickle.dump(chk_dict, open(os.path.join(folder_name,'options.pkl'), 'wb'))
+
+    def load_checkpoint(self,pl_model,folder_name):
+            pl_model.model.load_state_dict(torch.load(os.path.join(folder_name,'model.pt')))
+            return pickle.load(open(os.path.join(folder_name,'options.pkl'), 'rb'))
+
+    def fit(self, pl_model=None, ckpt_path=None):
         #replace function
-        model.log = self.log
-        model.log_dict = self.log_dict
+        pl_model.log = self.log
+        pl_model.log_dict = self.log_dict
 
-        model.to(self.device)
+        pl_model.to(self.device)
         # initialize a GradScaler. If enabled=False scaler is a no-op
-        scaler = torch.cuda.amp.GradScaler(enabled=(self.dtype == 'float16'))
+        #scaler = torch.cuda.amp.GradScaler(enabled=(self.dtype == 'float16'))
 
-        model.prepare_data()
+        pl_model.prepare_data()
 
-        model.on_fit_start()
+        pl_model.on_fit_start()
 
-        model.setup("fit")
+        pl_model.setup("fit")
 
-        self.dm = LocalDataModule(self.mode, model)
+        self.dm = LocalDataModule(self.mode, pl_model)
 
-        optimizers, lr_shedulers = model.configure_optimizers()
+        optimizers, lr_shedulers = pl_model.configure_optimizers()
 
         train_max_step = 0
         if self.mode == 'steps':
@@ -153,17 +171,33 @@ class LocalTrainer:
 
         progress_bar = tqdm(total=train_max_step,desc='Train')
         
-        model.train()
+        pl_model.train()
 
-        model.on_train_start()
+        pl_model.on_train_start()
 
         #fit loop 
         #https://pytorch-lightning.readthedocs.io/en/1.8.6/common/lightning_module.html
 
-        model.on_train_epoch_start()
-
         iter_num = 0
         epoch_num = 0
+
+        if not ckpt_path is None:
+            print('Resume from checkpoint:',ckpt_path)
+            chk_dict = self.load_checkpoint(pl_model,ckpt_path)
+            optimizers = chk_dict['optimizers']
+            lr_shedulers = chk_dict['lr_shedulers']
+            iter_num = chk_dict['current_step']
+            epoch_num = chk_dict['current_epoch']
+            for _ in range(iter_num):
+                _ = self.dm.get_train_batch()
+                progress_bar.update(1)
+            
+            #validate
+            self.validate(pl_model)
+            pl_model.train()
+
+        pl_model.on_train_epoch_start()
+
         while True:
             self.global_step = iter_num
 
@@ -178,25 +212,30 @@ class LocalTrainer:
 
                 batch = self.dm.get_train_batch()
 
+                # for key in batch.keys():
+                #     batch[key] = batch[key].half()
+
                 if micro_step == 0:
-                    model.on_train_batch_start(batch, batch_idx)
+                    pl_model.on_train_batch_start(batch, batch_idx)
 
                 batch = self.batch_to_device(batch)
 
-                loss = model.training_step(batch,batch_idx=batch_idx)
-                scaler.scale(loss).backward()
+                loss = pl_model.training_step(batch,batch_idx=batch_idx)
+                #scaler.scale(loss).backward()
+                loss.backward()
             
             # clip the gradient
             if self.gradient_clip_val != 0.0:
-                for optimizer in optimizers:
-                    scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), self.gradient_clip_val)
+                # for optimizer in optimizers:
+                #     scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(pl_model.parameters(), self.gradient_clip_val)
 
             # step the optimizers and scaler if training in fp16
             for optimizer in optimizers:
-                scaler.step(optimizer)
+                #scaler.step(optimizer)
+                optimizer.step()
 
-            scaler.update()
+            #scaler.update()
             # flush the gradients as soon as we can, no need for this memory anymore
             for optimizer in optimizers:
                 optimizer.zero_grad(set_to_none=True)
@@ -213,9 +252,13 @@ class LocalTrainer:
             else:
                 pass
 
+            iter_num += 1
+
             if validate_epoch_end:
-                self.validate(model)
-                model.train()
+                self.save_checkpoint(pl_model,optimizers,lr_shedulers,iter_num,epoch_num)
+                self.validate(pl_model)
+                pl_model.train()
+                pl_model.on_train_epoch_start()
 
                 if self.mode == 'epoch':
                     self.dm.reset_epoch()
@@ -228,8 +271,6 @@ class LocalTrainer:
                     if self.max_epochs >= epoch_num:
                         break
 
-            iter_num += 1
-
             #exit from training loop
             if iter_num > train_max_step:
                 break
@@ -240,10 +281,8 @@ class LocalTrainer:
 
             progress_bar.update(1)
 
-        model.on_train_end()
+        pl_model.on_train_end()
 
         progress_bar.close()
 
-        model.on_fit_end()
-
-        print("FIT FIT FIT END")
+        pl_model.on_fit_end()

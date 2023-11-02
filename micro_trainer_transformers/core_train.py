@@ -93,8 +93,8 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         self.first_valid_batch = None
 
         #Аккумулирование шагов лоса, чтобы в конце эпохи получить среднюю метрику
-        self.epoch_train_logs = []
-        self.epoch_valid_logs = []
+        self.epoch_train_logs = {}
+        self.epoch_valid_logs = {}
         self.epoch_valid_list_dict_result = []
 
     def setup(self, stage=None):
@@ -294,7 +294,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
             if valid:
                 if self.compute_metrics_fn:
                     self.validate_labels.extend(list(batch['labels'].detach().cpu()))
-                    self.validate_predictions.extend(list(preds.logits.detach().cpu()))
+                    self.validate_predictions.extend(list(preds.logits.argmax(2).detach().cpu()))
             
         else:
             x = batch['image']
@@ -317,11 +317,15 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         
         loss = self.common_step(batch, batch_idx)
         
-        self.log("training_loss", loss, on_step=True, 
+        self.log("training_loss", loss.item(), on_step=True, 
                  on_epoch=True, prog_bar=False, 
                  batch_size=batch_size)
         
-        self.epoch_train_logs.append({'training_loss': loss.detach().cpu().numpy()})
+        if 'training_loss' not in self.epoch_train_logs:
+            self.epoch_train_logs['training_loss'] = 0.0
+            self.epoch_train_logs['training_items'] = 0
+        self.epoch_train_logs['training_loss'] += loss.item()
+        self.epoch_train_logs['training_items'] += 1
 
         return loss
 
@@ -340,11 +344,16 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
             
         loss = self.common_step(batch, batch_idx, valid = True)
         
-        self.log("valid_loss", loss, on_step=False, 
+        self.log("valid_loss", loss.item(), on_step=False, 
                  on_epoch=True, prog_bar=True, 
                  batch_size=batch_size)
 
-        self.epoch_valid_logs.append({'valid_loss': loss.detach().cpu().numpy()})
+        if 'valid_loss' not in self.epoch_valid_logs:
+            self.epoch_valid_logs['valid_loss'] = 0.0
+            self.epoch_valid_logs['valid_items'] = 0
+        self.epoch_valid_logs['valid_loss'] += loss.item()
+        self.epoch_valid_logs['valid_items'] += 1
+
 
     def on_train_epoch_start(self):
         self.epoch_train_logs.clear()
@@ -364,21 +373,23 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         dict_result = {}
         dict_result['step'] = current_step
 
-        if len(self.epoch_train_logs) > 0:
-            df = pd.DataFrame(self.epoch_train_logs)
-            dict_result.update(dict(df.sum() / len(df)))
-        
+        if 'training_loss' in self.epoch_train_logs:
+            self.epoch_train_logs['training_loss'] = self.epoch_train_logs['training_loss'] / self.epoch_train_logs['training_items']
+            self.epoch_train_logs.pop('training_items')
+            dict_result.update(self.epoch_train_logs)
+
         if 'training_loss' not in dict_result.keys():
             dict_result['training_loss'] = 0.0
 
-        if len(self.epoch_valid_logs) > 0:
-            df = pd.DataFrame(self.epoch_valid_logs)
-            dict_result.update(dict(df.sum() / len(df)))
+        if 'valid_loss' in self.epoch_valid_logs:
+            self.epoch_valid_logs['valid_loss'] = self.epoch_valid_logs['valid_loss'] / self.epoch_valid_logs['valid_items']
+            self.epoch_valid_logs.pop('valid_items')
+            dict_result.update(self.epoch_valid_logs)
 
         if self.compute_metrics_fn:            
             
             predictions = self.validate_predictions
-            predictions = [value.argmax(1) for value in predictions]
+            #predictions = [value.argmax(1) for value in predictions]
 
 
             result_dict = self.compute_metrics_fn(
@@ -544,7 +555,8 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                     device='cuda',precision=precision,
                     gradient_clip_val=self.training_params.max_grad_norm,
                     val_check_interval=val_check_interval,
-                    path_log=self.training_params.path_log)
+                    path_log=self.training_params.path_log,
+                    path_checkpoints=self.training_params.path_checkpoint)
 
 
     def model_vis_save(self):
