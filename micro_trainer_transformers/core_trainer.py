@@ -123,7 +123,6 @@ class LocalTrainer:
             metric_value = metric_value.item()
 
         if not self.logger_tb is None:
-            #if self.global_step % 50 == 0:
             self.logger_tb.add_scalar(metric_name, metric_value, self.global_step)
 
     def log_dict(self, metric_dict, **kwargs):
@@ -153,7 +152,7 @@ class LocalTrainer:
             pl_model.model.load_state_dict(torch.load(os.path.join(folder_name,'model.pt'), map_location=device))
             return torch.load(os.path.join(folder_name,'options.pt'), map_location=device)
 
-    def fit(self, pl_model=None, ckpt_path=None):
+    def fit(self, pl_model=None, ckpt_path=None, resume_sheduler: bool = True):
         #replace function
         pl_model.log = self.log
         pl_model.log_dict = self.log_dict
@@ -172,6 +171,7 @@ class LocalTrainer:
         self.dm = LocalDataModule(self.mode, pl_model)
 
         optimizers, lr_shedulers = pl_model.configure_optimizers()
+        print('lr_scheduler._last_lr:',lr_shedulers[0]['scheduler']._last_lr)
 
         train_max_step = 0
         if self.mode == 'steps':
@@ -201,22 +201,54 @@ class LocalTrainer:
             for idx in range(len(optimizers)):
                 optimizers[idx].load_state_dict(optimizers_load[idx])
                 optimizer_to(optimizers[idx],self.device)
-            lr_shedulers = chk_dict['lr_shedulers']
+                
+            print('lr_scheduler._last_lr 2:',lr_shedulers[0]['scheduler']._last_lr)
+            
+            if resume_sheduler:
+                print(' - resume lr_shedulers')
+                lr_shedulers = chk_dict['lr_shedulers']
+                
+            print('lr_scheduler._last_lr 3:',lr_shedulers[0]['scheduler']._last_lr)
+                
             iter_num = chk_dict['current_step']
             epoch_num = chk_dict['current_epoch']
+            
             for idx in range(len(lr_shedulers)):
                 sheduler = lr_shedulers[idx]
                 optimizer = optimizers[idx]
+                
+                if not resume_sheduler:
+                    for jdx in range(len(optimizer.param_groups)):
+                        last_lr = sheduler['scheduler']._last_lr[jdx]
+                        optimizer.param_groups[jdx]['lr'] = last_lr
+                
                 sheduler['scheduler'].optimizer = optimizer
                 if sheduler['interval'] == 'step':
                     sheduler['scheduler'].step()
+                print('lr_scheduler._last_lr 4:',lr_shedulers[0]['scheduler']._last_lr)
+                    
 
             self.global_step = iter_num
-
-            for _ in range(iter_num):
-                _ = self.dm.get_train_batch()
-                progress_bar.update(1)
             
+            iter_lr_steps = 0
+            print(' - batch resume iter num:', iter_num)
+            for step_train in range(iter_num):
+                for micro_step in range(self.accumulate_grad_batches):
+                    _ = self.dm.get_train_batch()
+                progress_bar.update(1)
+
+                if not resume_sheduler:
+                    for idx in range(len(lr_shedulers)):
+                        sheduler = lr_shedulers[idx]
+                        if sheduler['interval'] == 'step':
+                            sheduler['scheduler'].step()
+                            iter_lr_steps += 1
+
+            if not resume_sheduler:
+                print(' - iter steps lr_shedulers:', iter_lr_steps)
+                print('lr_scheduler._last_lr 5:',lr_shedulers[0]['scheduler']._last_lr)
+                            
+                
             #validate
             self.validate(pl_model)
             pl_model.train()

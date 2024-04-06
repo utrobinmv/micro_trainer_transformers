@@ -302,6 +302,8 @@ class UniversalOptim: #(pl.LightningModule):
 
         if scheduler is None:
 
+            # В будущем добавить CosineAnnealingWarmRestarts Там скорость обучения периодически взбадривает модель, потом постепенно затухает. И так много раз
+
             name_sheduler = self.training_params.lr_scheduler_type
             if name_sheduler == 'constant':
                 scheduler = get_constant_schedule(optimizer)

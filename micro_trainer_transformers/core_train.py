@@ -87,7 +87,9 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         
         self.loss_fn = self.training_params.loss_fn
         
-        self.pbar_train = tqdm(desc='Total training model',leave=True,position=2) 
+        self.pbar_train = None
+        if self.training_params.local_trainer == False:
+            self.pbar_train = tqdm(desc='Total training model',leave=True,position=2) 
         
         self.train_mode_start = False
         self.save_first_valid_batch = False
@@ -114,16 +116,17 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         
         self.train_mode_start = True
         
-        self.pbar_train.clear()
-        if self.training_params.max_train_steps is None or self.training_params.max_train_steps == -1:
-            self.pbar_train.reset(total=self._trainer.estimated_stepping_batches)
-        else:
-            print('max_train_steps:',self.training_params.max_train_steps)
-            self.pbar_train.reset(total=self.training_params.max_train_steps)
-            
-        if self.pbar_train_restore_n > 0: #restore from checkpoint
-            self.pbar_train.n = self.pbar_train_restore_n
-            self.pbar_train_restore_n = 0
+        if self.pbar_train is not None:
+            self.pbar_train.clear()
+            if self.training_params.max_train_steps is None or self.training_params.max_train_steps == -1:
+                self.pbar_train.reset(total=self._trainer.estimated_stepping_batches)
+            else:
+                print('max_train_steps:',self.training_params.max_train_steps)
+                self.pbar_train.reset(total=self.training_params.max_train_steps)
+                
+            if self.pbar_train_restore_n > 0: #restore from checkpoint
+                self.pbar_train.n = self.pbar_train_restore_n
+                self.pbar_train_restore_n = 0
         
         pass 
 
@@ -143,9 +146,10 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
             for _ in tqdm(range(buffer_size), desc="Reload train dataloader...",leave=False,position=3):
                 #self.pbar_train.display()
                 if self.dataset_train_size_count % (self.training_params.batch_size * self.training_params.gradient_accumulation_steps)  == 0:
-                    #self.pbar_train.refresh()
-                    self.pbar_train.update(n=0)
-                    self.pbar_train.display()
+                    if self.pbar_train is not None:
+                        #self.pbar_train.refresh()
+                        self.pbar_train.update(n=0)
+                        self.pbar_train.display()
                     
                 if buffer_size <= 0:
                     break
@@ -244,7 +248,10 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
 
     def on_save_checkpoint(self, checkpoint):
         checkpoint['dataset_start_epoch_data_iter'] = self.dataset_start_epoch_data_iter
-        checkpoint['pbar_train_n'] = self.pbar_train.n
+        if self.pbar_train is not None:
+            checkpoint['pbar_train_n'] = self.pbar_train.n
+        else:
+            checkpoint['pbar_train_n'] = 0
         checkpoint['dataset_train_size'] = self.dataset_train_size
 
         pass
@@ -255,28 +262,30 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         if batch_idx % self.training_params.gradient_accumulation_steps == 0 and self.train_mode_start:
             # if self.pbar_train.total == self.pbar_train.n:
             #     self.pbar_train.total += 1
-            self.pbar_train.update()
-            self.pbar_train.display()
-            
-            t1 = self.pbar_train.start_t
-            t2 = self.pbar_train.last_print_t
-            t = t2 - t1
-            t_prognoz = t / self.pbar_train.n * self.pbar_train.total
-            
-            time_total = time_in_second_hms(t_prognoz)
-            time_str = time_in_second_hms(t_prognoz - t)
-            
-            desc_str = f'Total train model [{time_total}/{time_str}]'
-            
-            #Подсчет эпох в зависимости от датасета
-            if self.dataset_total_batches == 0:
-                if self.dataset_train_size > 0:
-                    self.dataset_total_batches = self.dataset_train_size / (self.training_params.batch_size * self.training_params.gradient_accumulation_steps)
-            else:                        
-                data_epoch = self.m_trainer.global_step / self.dataset_total_batches
-                desc_str += f'. Epoch {data_epoch:.2f}'
+
+            if self.pbar_train is not None:
+                self.pbar_train.update()
+                self.pbar_train.display()
                 
-            self.pbar_train.set_description(desc_str)
+                t1 = self.pbar_train.start_t
+                t2 = self.pbar_train.last_print_t
+                t = t2 - t1
+                t_prognoz = t / self.pbar_train.n * self.pbar_train.total
+                
+                time_total = time_in_second_hms(t_prognoz)
+                time_str = time_in_second_hms(t_prognoz - t)
+                
+                desc_str = f'Total train model [{time_total}/{time_str}]'
+                
+                #Подсчет эпох в зависимости от датасета
+                if self.dataset_total_batches == 0:
+                    if self.dataset_train_size > 0:
+                        self.dataset_total_batches = self.dataset_train_size / (self.training_params.batch_size * self.training_params.gradient_accumulation_steps)
+                else:                        
+                    data_epoch = self.m_trainer.global_step / self.dataset_total_batches
+                    desc_str += f'. Epoch {data_epoch:.2f}'
+                    
+                self.pbar_train.set_description(desc_str)
 
     # def on_train_batch_end(self, outputs, batch, batch_idx):
     #     print(len(outputs),batch_idx)
@@ -655,13 +664,13 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         
         return lr_recomend
         
-    def fit(self,resume_from_checkpoint=None):
+    def fit(self,resume_from_checkpoint=None, resume_sheduler: bool = True):
         
         self.create_trainer()
 
         save_useful_info(self.training_params.path_log,self.model,self.training_params.__dict__, self.m_trainer.__dict__)
 
-        self.m_trainer.fit(self,ckpt_path=resume_from_checkpoint)
+        self.m_trainer.fit(self,ckpt_path=resume_from_checkpoint, resume_sheduler = resume_sheduler)
         
         if not self.training_params.local_trainer:
             print('Best model path:', self.checkpoint_callback.best_model_path)
