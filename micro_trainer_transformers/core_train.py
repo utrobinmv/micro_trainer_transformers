@@ -1,5 +1,6 @@
 from typing import Any, Callable, Dict, NewType, Union, List, Optional, Tuple
 
+import gc
 from tqdm.auto import tqdm
 
 import pandas as pd
@@ -97,6 +98,9 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         self.epoch_valid_logs = {}
         self.epoch_valid_list_dict_result = []
 
+        self.validate_labels = []
+        self.validate_predictions = []
+
     def setup(self, stage=None):
         pass
 
@@ -111,9 +115,10 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         self.train_mode_start = True
         
         self.pbar_train.clear()
-        if self.training_params.max_train_steps is None:
+        if self.training_params.max_train_steps is None or self.training_params.max_train_steps == -1:
             self.pbar_train.reset(total=self._trainer.estimated_stepping_batches)
         else:
+            print('max_train_steps:',self.training_params.max_train_steps)
             self.pbar_train.reset(total=self.training_params.max_train_steps)
             
         if self.pbar_train_restore_n > 0: #restore from checkpoint
@@ -123,9 +128,9 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         pass 
 
     def on_train_start(self):
-        self.validate_labels = []
-        self.validate_predictions = []
-        
+        # self.validate_labels.clear()
+        # self.validate_predictions.clear()
+       
         pass
     
     def train_dataloader(self):
@@ -358,11 +363,19 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
     def on_train_epoch_start(self):
         self.epoch_train_logs.clear()
 
+        #cache clear
+        gc.collect()
+        torch.cuda.empty_cache()
+
     def on_validation_epoch_start(self):
-        self.validate_labels = []
-        self.validate_predictions = []
+        self.validate_labels.clear()
+        self.validate_predictions.clear()
         self.epoch_valid_logs.clear()
         
+        #cache clear
+        # gc.collect()
+        torch.cuda.empty_cache()
+
         pass
 
     def on_validation_epoch_end(self):
@@ -409,9 +422,13 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                 pd.set_option('display.max_rows', None)
                 df = pd.DataFrame(self.epoch_valid_list_dict_result)
                 display(df)
+                del df
             else:
                 print(self.epoch_valid_list_dict_result[-1])
-        pass
+
+        #cache clear
+        # gc.collect()
+        torch.cuda.empty_cache()
 
 
     def create_trainer(self, mode='train'):

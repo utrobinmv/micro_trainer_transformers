@@ -3,10 +3,15 @@ from tqdm.auto import tqdm
 import os
 import pickle
 import torch
+import gc
 
 from torch.utils.tensorboard import SummaryWriter
 
-from .utils import make_dirs
+from .utils import make_dirs, optimizer_to
+
+def cleanup():
+    gc.collect()
+    torch.cuda.empty_cache()
 
 class LocalDataModule:
     def __init__(self, mode, model):
@@ -76,7 +81,7 @@ class LocalTrainer:
 
         self.dtype = dtype
 
-        self.ctx = nullcontext() if self.device == 'cpu' else torch.amp.autocast(device_type=self.device, dtype=ptdtype)
+        #self.ctx = nullcontext() if self.device == 'cpu' else torch.amp.autocast(device_type=self.device, dtype=ptdtype)
 
         self.logger_tb = None
         if not path_log is None:
@@ -118,6 +123,7 @@ class LocalTrainer:
             metric_value = metric_value.item()
 
         if not self.logger_tb is None:
+            #if self.global_step % 50 == 0:
             self.logger_tb.add_scalar(metric_name, metric_value, self.global_step)
 
     def log_dict(self, metric_dict, **kwargs):
@@ -132,22 +138,28 @@ class LocalTrainer:
             make_dirs(folder_name, silent=True)
             torch.save(pl_model.model.state_dict(), os.path.join(folder_name,'model.pt')) 
             chk_dict = {}
-            chk_dict['optimizers'] = optimizers
+            save_optimizers = []
+            for optimizer in optimizers:
+                save_optimizers.append(optimizer.state_dict())
+            chk_dict['optimizers'] = save_optimizers
             chk_dict['lr_shedulers'] = lr_shedulers
             chk_dict['current_step'] = current_step
             chk_dict['current_epoch'] = current_epoch
-            pickle.dump(chk_dict, open(os.path.join(folder_name,'options.pkl'), 'wb'))
+            torch.save(chk_dict, os.path.join(folder_name,'options.pt'))
 
     def load_checkpoint(self,pl_model,folder_name):
-            pl_model.model.load_state_dict(torch.load(os.path.join(folder_name,'model.pt')))
-            return pickle.load(open(os.path.join(folder_name,'options.pkl'), 'rb'))
+            device = pl_model.model.device
+            device = 'cpu'
+            pl_model.model.load_state_dict(torch.load(os.path.join(folder_name,'model.pt'), map_location=device))
+            return torch.load(os.path.join(folder_name,'options.pt'), map_location=device)
 
     def fit(self, pl_model=None, ckpt_path=None):
         #replace function
         pl_model.log = self.log
         pl_model.log_dict = self.log_dict
 
-        pl_model.to(self.device)
+        if ckpt_path is None:
+            pl_model.to(self.device)
         # initialize a GradScaler. If enabled=False scaler is a no-op
         #scaler = torch.cuda.amp.GradScaler(enabled=(self.dtype == 'float16'))
 
@@ -184,10 +196,23 @@ class LocalTrainer:
         if not ckpt_path is None:
             print('Resume from checkpoint:',ckpt_path)
             chk_dict = self.load_checkpoint(pl_model,ckpt_path)
-            optimizers = chk_dict['optimizers']
+            pl_model.to(self.device)            
+            optimizers_load = chk_dict['optimizers']
+            for idx in range(len(optimizers)):
+                optimizers[idx].load_state_dict(optimizers_load[idx])
+                optimizer_to(optimizers[idx],self.device)
             lr_shedulers = chk_dict['lr_shedulers']
             iter_num = chk_dict['current_step']
             epoch_num = chk_dict['current_epoch']
+            for idx in range(len(lr_shedulers)):
+                sheduler = lr_shedulers[idx]
+                optimizer = optimizers[idx]
+                sheduler['scheduler'].optimizer = optimizer
+                if sheduler['interval'] == 'step':
+                    sheduler['scheduler'].step()
+
+            self.global_step = iter_num
+
             for _ in range(iter_num):
                 _ = self.dm.get_train_batch()
                 progress_bar.update(1)
@@ -220,9 +245,18 @@ class LocalTrainer:
 
                 batch = self.batch_to_device(batch)
 
-                loss = pl_model.training_step(batch,batch_idx=batch_idx)
-                #scaler.scale(loss).backward()
-                loss.backward()
+                try:
+                    loss = pl_model.training_step(batch,batch_idx=batch_idx)
+                    #scaler.scale(loss).backward()
+
+                    #add with large model! ?????
+                    #loss /= self.accumulate_grad_batches
+
+                    loss.backward()
+                except (RuntimeError) as e:
+                    print('runtime error on step:', self.global_step, e)
+                    loss = None
+                    cleanup()
             
             # clip the gradient
             if self.gradient_clip_val != 0.0:
