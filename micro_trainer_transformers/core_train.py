@@ -33,6 +33,8 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         data_collator: Any = None,
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
         compute_metrics: Any = None,
+        evaluator: Any = None,
+        loss: Any = None,
         
     ) -> None:
         super().__init__()
@@ -40,6 +42,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         self.m_trainer = None
 
         self.optimizers = optimizers
+        self.evaluator = evaluator
 
         self.training_params = args
         
@@ -71,8 +74,10 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         else:
             if isinstance(self.dataset_valid, IterableDataset):
                 self.dataset_valid_size = 0
-            else:
+            elif isinstance(self.dataset_valid, Dataset):
                 self.dataset_valid_size = len(self.dataset_valid)
+            else:
+                self.dataset_valid_size = 0
         self.dataloader_valid = None
         self.dataset_total_batches = 0
         
@@ -85,7 +90,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         self.data_collator = data_collator
         self.compute_metrics_fn = compute_metrics
         
-        self.loss_fn = self.training_params.loss_fn
+        self.loss_fn = loss
         
         self.pbar_train = None
         if self.training_params.local_trainer == False:
@@ -299,9 +304,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
          
     def common_step(self, batch: Dict[str, torch.LongTensor], batch_idx: int, valid: bool = False) -> torch.Tensor:
                
-        if self.training_params.loss_fn_in_model:
-            
-
+        if not self.loss_fn:            
             preds = self.model(**batch)
             loss = preds.loss
             
@@ -575,14 +578,25 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
             
         else:
 
-            from micro_trainer_transformers.core_trainer import LocalTrainer
-            self.m_trainer = LocalTrainer(**max_train_kwargs,
-                    accumulate_grad_batches=self.training_params.gradient_accumulation_steps,
-                    device='cuda',precision=precision,
-                    gradient_clip_val=self.training_params.max_grad_norm,
-                    val_check_interval=val_check_interval,
-                    path_log=self.training_params.path_log,
-                    path_checkpoints=self.training_params.path_checkpoint)
+            if self.training_params.local_trainer == 'sentence':
+                from micro_trainer_transformers.sentence_trainer import SentenceTrainer
+                self.m_trainer = SentenceTrainer(**max_train_kwargs,
+                        accumulate_grad_batches=self.training_params.gradient_accumulation_steps,
+                        device='cuda',precision=precision,
+                        gradient_clip_val=self.training_params.max_grad_norm,
+                        val_check_interval=val_check_interval,
+                        path_log=self.training_params.path_log,
+                        path_checkpoints=self.training_params.path_checkpoint)
+            else:
+
+                from micro_trainer_transformers.core_trainer import LocalTrainer
+                self.m_trainer = LocalTrainer(**max_train_kwargs,
+                        accumulate_grad_batches=self.training_params.gradient_accumulation_steps,
+                        device='cuda',precision=precision,
+                        gradient_clip_val=self.training_params.max_grad_norm,
+                        val_check_interval=val_check_interval,
+                        path_log=self.training_params.path_log,
+                        path_checkpoints=self.training_params.path_checkpoint)
 
 
     def model_vis_save(self):

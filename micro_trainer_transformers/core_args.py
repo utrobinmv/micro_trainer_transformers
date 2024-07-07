@@ -32,10 +32,6 @@ class TrainigParameters:
     data_streaming_valid: bool = False
     limit_val_batches: int or float or None = None
 
-    #loss
-    loss_fn_in_model: bool = False
-    loss_fn: Any = None
-
     #lr_scheduler_type
     lr_scheduler_type: str = 'OneCycleLR' #"linear","cosine","cosine_with_restarts"
     lr_scheduler_interval: str = 'step' #step or epoch 
@@ -68,7 +64,7 @@ class TrainigParameters:
     root_path_checkpoint = '/checkpoints'
 
     #local trainer
-    local_trainer: bool = False
+    local_trainer: bool | str = False  # False True 'sentence'
     
     def __init__(self):
         
@@ -123,8 +119,6 @@ class TrainigParameters:
         
         assert ta.eval_steps == ta.save_steps #У меня это один и тот же параметр, значит данные должны быть равны
         
-        self.loss_fn_in_model = True
-
         self.max_grad_norm = ta.max_grad_norm
         self.evaluation_strategy = ta.evaluation_strategy
         self.learning_rate = ta.learning_rate

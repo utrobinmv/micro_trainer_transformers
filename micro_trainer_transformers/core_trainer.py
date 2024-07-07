@@ -8,6 +8,8 @@ import gc
 from torch.utils.tensorboard import SummaryWriter
 
 from .utils import make_dirs, optimizer_to
+from .base import BaseTrainer
+from .core_logger import TrainerLogger
 
 def cleanup():
     gc.collect()
@@ -43,14 +45,17 @@ class LocalDataModule:
 
         return batch
 
-class LocalTrainer:
-    def __init__(self, max_epochs = None, max_steps = None,
+
+class LocalTrainer(BaseTrainer, TrainerLogger):
+    def __init__(self, max_epochs=None, max_steps=None,
                  accumulate_grad_batches=None, device=None,
                  precision=None,
                  gradient_clip_val=0.0,
                  val_check_interval=None,
                  path_log=None,
                  path_checkpoints=None):
+        super().__init__()
+
         self.max_epochs = max_epochs
         self.max_steps = max_steps
 
@@ -63,7 +68,6 @@ class LocalTrainer:
         self.gradient_clip_val = gradient_clip_val
         self.val_check_interval = val_check_interval
 
-        self.global_step = 0
 
 
         self.device = device
@@ -85,7 +89,7 @@ class LocalTrainer:
 
         self.logger_tb = None
         if not path_log is None:
-            self.logger_tb = SummaryWriter(os.path.join(path_log,'tensorboard'))
+            self.logger_tb = SummaryWriter(os.path.join(path_log, 'tensorboard'))
 
         self.path_checkpoints = path_checkpoints
 
@@ -112,22 +116,6 @@ class LocalTrainer:
         pl_model.on_validation_epoch_end()
 
         torch.set_grad_enabled(True)
-
-    def log(self, metric_name, metric_value, **kwargs):
-        '''
-        log function
-        '''
-        #print(metric_name,metric_value)
-
-        if isinstance(metric_value, torch.Tensor):
-            metric_value = metric_value.item()
-
-        if not self.logger_tb is None:
-            self.logger_tb.add_scalar(metric_name, metric_value, self.global_step)
-
-    def log_dict(self, metric_dict, **kwargs):
-        for key in metric_dict.keys():
-            self.log(key, metric_dict[key], **kwargs)
 
     def save_checkpoint(self,pl_model,optimizers,lr_shedulers,current_step,current_epoch):
 
@@ -294,7 +282,8 @@ class LocalTrainer:
             if self.gradient_clip_val != 0.0:
                 # for optimizer in optimizers:
                 #     scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(pl_model.parameters(), self.gradient_clip_val)
+                grad_norm = torch.nn.utils.clip_grad_norm_(pl_model.parameters(), self.gradient_clip_val)
+                self.log('grad_norm', grad_norm)
 
             # step the optimizers and scaler if training in fp16
             for optimizer in optimizers:
@@ -337,7 +326,7 @@ class LocalTrainer:
                     if self.max_epochs >= epoch_num:
                         break
 
-            #exit from training loop
+            # exit from training loop
             if iter_num > train_max_step:
                 break
 
@@ -345,6 +334,9 @@ class LocalTrainer:
                 if sheduler['interval'] == 'step':
                     sheduler['scheduler'].step()
 
+            if loss and grad_norm:
+                progress_bar.set_postfix({"loss": "{:.6f}".format(loss.item()),
+                                          "grad_norm": "{:.6f}".format(grad_norm)})
             progress_bar.update(1)
 
         pl_model.on_train_end()
