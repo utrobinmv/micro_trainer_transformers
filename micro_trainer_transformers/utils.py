@@ -105,3 +105,56 @@ def optimizer_to(optim, device):
                     subparam.data = subparam.data.to(device)
                     if subparam._grad is not None:
                         subparam._grad.data = subparam._grad.data.to(device)
+
+def resume_checkpoint_param_trainer(model, 
+                                    optimizers, 
+                                    resume_from_checkpoint=None,
+                                    resume_sheduler=True):
+
+        model_device = model.device
+        optimizer, scheduler = optimizers
+
+        device = 'cpu'
+        model.load_state_dict(torch.load(os.path.join(resume_from_checkpoint,'model.pt'), map_location=device))
+        chk_dict = torch.load(os.path.join(resume_from_checkpoint,'options.pt'), map_location=device)
+
+        model.to(model_device)            
+        optimizers_load = chk_dict['optimizers']
+        assert len(optimizers_load) == 1
+
+        lr_shedulers = chk_dict['lr_shedulers']
+        assert len(lr_shedulers) == 1
+
+        for idx in range(1):
+            optimizer.load_state_dict(optimizers_load[idx])
+            optimizer_to(optimizer, model_device)   
+
+        iter_num = chk_dict['current_step']
+
+        if resume_sheduler:
+            scheduler.load_state_dict(lr_shedulers[0]['scheduler'].state_dict())
+            for jdx in range(len(optimizer.param_groups)):
+                last_lr = scheduler._last_lr[jdx]
+                optimizer.param_groups[jdx]['lr'] = last_lr
+
+            scheduler.optimizer = optimizer
+            print('lr_scheduler._last_lr 7:',scheduler._last_lr)                    
+        else:
+            for jdx in range(len(optimizer.param_groups)):
+                last_lr = scheduler._last_lr[jdx]
+                optimizer.param_groups[jdx]['lr'] = last_lr
+
+            scheduler.optimizer = optimizer
+
+            iter_lr_steps = 0
+            for _ in range(iter_num):
+                scheduler.step()
+                iter_lr_steps += 1
+
+            print(' - iter steps lr_shedulers:', iter_lr_steps)
+            print('lr_scheduler._last_lr 5:',scheduler._last_lr)                    
+
+        chk_dict.pop('lr_shedulers') 
+        chk_dict.pop('optimizers') 
+
+        return model, (optimizer, scheduler), chk_dict

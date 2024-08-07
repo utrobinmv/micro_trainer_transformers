@@ -23,6 +23,7 @@ from .utils import time_in_second_hms, make_dirs, set_seed, save_useful_info
 from .utils import in_jupyter_notebook
 from .core_optim import UniversalOptim
 
+
 class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
     def __init__(
         self,
@@ -302,16 +303,66 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                 print('get lr:', float(param_group['lr']))
                 return float(param_group['lr'])
          
+    # def generate(self):
+    #     # https://github.com/karpathy/build-nanogpt/blob/master/train_gpt2.py#L449
+    #     # self.model.eval()
+    #     num_return_sequences = 4
+    #     max_length = 32
+    #     #tokens = enc.encode("Hello, I'm a language model,")
+    #     tokens = torch.tensor(tokens, dtype=torch.long)
+    #     tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
+    #     xgen = tokens.to(device)
+    #     sample_rng = torch.Generator(device=device)
+    #     sample_rng.manual_seed(42 + ddp_rank)
+    #     while xgen.size(1) < max_length:
+    #         # forward the model to get the logits
+    #         with torch.no_grad():
+    #             with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+    #                 logits, loss = self.model(xgen) # (B, T, vocab_size)
+    #             # take the logits at the last position
+    #             logits = logits[:, -1, :] # (B, vocab_size)
+    #             # get the probabilities
+    #             probs = F.softmax(logits, dim=-1)
+    #             # do top-k sampling of 50 (huggingface pipeline default)
+    #             # topk_probs here becomes (5, 50), topk_indices is (5, 50)
+    #             topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
+    #             # select a token from the top-k probabilities
+    #             # note: multinomial does not demand the input to sum to 1
+    #             ix = torch.multinomial(topk_probs, 1, generator=sample_rng) # (B, 1)
+    #             # gather the corresponding indices
+    #             xcol = torch.gather(topk_indices, -1, ix) # (B, 1)
+    #             # append to the sequence
+    #             xgen = torch.cat((xgen, xcol), dim=1)        
+         
     def common_step(self, batch: Dict[str, torch.LongTensor], batch_idx: int, valid: bool = False) -> torch.Tensor:
                
         if not self.loss_fn:            
+            
             preds = self.model(**batch)
             loss = preds.loss
-            
-            if valid:
+
+            if valid and self.training_params.predict_with_generate:
+                preds = None
+                if self.training_params.generation_config:
+                    generation_config = self.training_params.generation_config
+                else:
+                    generation_config = self.model.generation_config
+                    
+                max_length = batch['labels'].shape[1]
+                generation_config.max_length = max_length + 10
+                
+                preds = self.model.generate(batch['input_ids'], generation_config=generation_config)
+                
                 if self.compute_metrics_fn:
                     self.validate_labels.extend(list(batch['labels'].detach().cpu()))
-                    self.validate_predictions.extend(list(preds.logits.argmax(2).detach().cpu()))
+                    self.validate_predictions.extend(list(preds.detach().cpu()))
+                
+            else:
+            
+                if valid:
+                    if self.compute_metrics_fn:
+                        self.validate_labels.extend(list(batch['labels'].detach().cpu()))
+                        self.validate_predictions.extend(list(preds.logits.argmax(2).detach().cpu()))
             
         else:
             x = batch['image']
@@ -677,14 +728,14 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         print('Save image plot result to:', save_log_filename)
         
         return lr_recomend
-        
-    def fit(self,resume_from_checkpoint=None, resume_sheduler: bool = True):
+
+    def fit(self,resume_from_checkpoint=None, resume_sheduler: bool = True, **kwargs):
         
         self.create_trainer()
 
         save_useful_info(self.training_params.path_log,self.model,self.training_params.__dict__, self.m_trainer.__dict__)
 
-        self.m_trainer.fit(self,ckpt_path=resume_from_checkpoint, resume_sheduler = resume_sheduler)
+        self.m_trainer.fit(self,ckpt_path=resume_from_checkpoint, **kwargs)
         
         if not self.training_params.local_trainer:
             print('Best model path:', self.checkpoint_callback.best_model_path)

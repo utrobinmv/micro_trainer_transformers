@@ -30,13 +30,18 @@ def get_constant_schedule(optimizer: Optimizer, last_epoch: int = -1):
     return LambdaLR(optimizer, lambda _: 1, last_epoch=last_epoch)
 
 
-def _get_constant_schedule_with_warmup_lr_lambda(current_step: int, *, num_warmup_steps: int):
+def _get_constant_schedule_with_warmup_lr_lambda(current_step: int, *, num_warmup_steps: int, min_lr_koef: float = 0.0):
     if current_step < num_warmup_steps:
-        return float(current_step) / float(max(1.0, num_warmup_steps))
+        # Вычисление коэффициента наклона прямой
+        slope = (1.0 - min_lr_koef) / num_warmup_steps
+        # Вычисление значения функции в заданной точке с использованием линейной интерполяции
+        value = min_lr_koef + slope * current_step
+        #return float(current_step) / float(max(1.0, num_warmup_steps))
+        return value
     return 1.0
 
 
-def get_constant_schedule_with_warmup(optimizer: Optimizer, num_warmup_steps: int, last_epoch: int = -1):
+def get_constant_schedule_with_warmup(optimizer: Optimizer, num_warmup_steps: int, last_epoch: int = -1, min_lr_koef=0.0):
     """
     Create a schedule with a constant learning rate preceded by a warmup period during which the learning rate
     increases linearly between 0 and the initial lr set in the optimizer.
@@ -53,17 +58,27 @@ def get_constant_schedule_with_warmup(optimizer: Optimizer, num_warmup_steps: in
         `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.
     """
 
-    lr_lambda = partial(_get_constant_schedule_with_warmup_lr_lambda, num_warmup_steps=num_warmup_steps)
+    lr_lambda = partial(_get_constant_schedule_with_warmup_lr_lambda, num_warmup_steps=num_warmup_steps, min_lr_koef=min_lr_koef)
     return LambdaLR(optimizer, lr_lambda, last_epoch=last_epoch)
 
 
-def _get_linear_schedule_with_warmup_lr_lambda(current_step: int, *, num_warmup_steps: int, num_training_steps: int):
+def _get_linear_schedule_with_warmup_lr_lambda(current_step: int, *, num_warmup_steps: int, num_training_steps: int, min_lr_koef: float = 0.0):
     if current_step < num_warmup_steps:
-        return float(current_step) / float(max(1, num_warmup_steps))
-    return max(0.0, float(num_training_steps - current_step) / float(max(1, num_training_steps - num_warmup_steps)))
+        # Вычисление коэффициента наклона прямой
+        slope = (1.0 - min_lr_koef) / num_warmup_steps
+        # Вычисление значения функции в заданной точке с использованием линейной интерполяции
+        value = min_lr_koef + slope * current_step
+        #return float(current_step) / float(max(1, num_warmup_steps))
+        return value
+    if current_step > num_training_steps:
+        value = min_lr_koef
+    else:
+        value = 1 - (current_step - num_warmup_steps) / (num_training_steps - num_warmup_steps) * (1.0 - min_lr_koef)
+    #return max(0.0, float(num_training_steps - current_step) / float(max(1, num_training_steps - num_warmup_steps)))
+    return value
 
 
-def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, last_epoch=-1):
+def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, last_epoch=-1, min_lr_koef=0.0):
     """
     Create a schedule with a learning rate that decreases linearly from the initial lr set in the optimizer to 0, after
     a warmup period during which it increases linearly from 0 to the initial lr set in the optimizer.
@@ -86,21 +101,37 @@ def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_st
         _get_linear_schedule_with_warmup_lr_lambda,
         num_warmup_steps=num_warmup_steps,
         num_training_steps=num_training_steps,
+        min_lr_koef=min_lr_koef
     )
     return LambdaLR(optimizer, lr_lambda, last_epoch)
 
 
 def _get_cosine_schedule_with_warmup_lr_lambda(
-    current_step: int, *, num_warmup_steps: int, num_training_steps: int, num_cycles: float
+    current_step: int, *, num_warmup_steps: int, num_training_steps: int, num_cycles: float,
+    min_lr_koef: float = 0.0
 ):
     if current_step < num_warmup_steps:
-        return float(current_step) / float(max(1, num_warmup_steps))
-    progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
-    return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
+        # Вычисление коэффициента наклона прямой
+        slope = (1.0 - min_lr_koef) / num_warmup_steps
+        # Вычисление значения функции в заданной точке с использованием линейной интерполяции
+        value = min_lr_koef + slope * current_step
+        #return float(current_step) / float(max(1, num_warmup_steps))
+        return value
+
+    if current_step > num_training_steps:
+        value = min_lr_koef
+    else:
+        progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+        value = max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
+        
+        slope = (1.0 - min_lr_koef)
+        value = (value * slope) + min_lr_koef
+    return value
 
 
 def get_cosine_schedule_with_warmup(
-    optimizer: Optimizer, num_warmup_steps: int, num_training_steps: int, num_cycles: float = 0.5, last_epoch: int = -1
+    optimizer: Optimizer, num_warmup_steps: int, num_training_steps: int, num_cycles: float = 0.5, last_epoch: int = -1,
+    min_lr_koef: float = 0.0
 ):
     """
     Create a schedule with a learning rate that decreases following the values of the cosine function between the
@@ -129,23 +160,34 @@ def get_cosine_schedule_with_warmup(
         num_warmup_steps=num_warmup_steps,
         num_training_steps=num_training_steps,
         num_cycles=num_cycles,
+        min_lr_koef=min_lr_koef
     )
     return LambdaLR(optimizer, lr_lambda, last_epoch)
 
 
 def _get_cosine_with_hard_restarts_schedule_with_warmup_lr_lambda(
-    current_step: int, *, num_warmup_steps: int, num_training_steps: int, num_cycles: int
+    current_step: int, *, num_warmup_steps: int, num_training_steps: int, num_cycles: int,
+    min_lr_koef: float = 0.0
 ):
+    slope = (1.0 - min_lr_koef)
+    
     if current_step < num_warmup_steps:
-        return float(current_step) / float(max(1, num_warmup_steps))
-    progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
-    if progress >= 1.0:
-        return 0.0
-    return max(0.0, 0.5 * (1.0 + math.cos(math.pi * ((float(num_cycles) * progress) % 1.0))))
+        value = float(current_step) / float(max(1, num_warmup_steps))
+    else:
+        progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+        if progress >= 1.0:
+            value = 0.0
+        else:
+            value = max(0.0, 0.5 * (1.0 + math.cos(math.pi * ((float(num_cycles) * progress) % 1.0))))
+
+    value = (value * slope) + min_lr_koef
+    
+    return value
 
 
 def get_cosine_with_hard_restarts_schedule_with_warmup(
-    optimizer: Optimizer, num_warmup_steps: int, num_training_steps: int, num_cycles: int = 1, last_epoch: int = -1
+    optimizer: Optimizer, num_warmup_steps: int, num_training_steps: int, num_cycles: int = 1, last_epoch: int = -1,
+    min_lr_koef: float = 0.0
 ):
     """
     Create a schedule with a learning rate that decreases following the values of the cosine function between the
@@ -173,6 +215,7 @@ def get_cosine_with_hard_restarts_schedule_with_warmup(
         num_warmup_steps=num_warmup_steps,
         num_training_steps=num_training_steps,
         num_cycles=num_cycles,
+        min_lr_koef=min_lr_koef
     )
     return LambdaLR(optimizer, lr_lambda, last_epoch)
 
@@ -303,20 +346,25 @@ class UniversalOptim: #(pl.LightningModule):
         if scheduler is None:
 
             # В будущем добавить CosineAnnealingWarmRestarts Там скорость обучения периодически взбадривает модель, потом постепенно затухает. И так много раз
+            lr1 = self.training_params.learning_rate 
+            lr2 = self.training_params.learning_rate_final
+            if not (lr1 > lr2):
+                raise ValueError(f"learning_rate_final ({lr2}) must be be smaller than initial lr ({lr1})")
+            min_lr_koef = lr2 / lr1
 
             name_sheduler = self.training_params.lr_scheduler_type
             if name_sheduler == 'constant':
                 scheduler = get_constant_schedule(optimizer)
             elif name_sheduler == "constant_with_warmup":
-                scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps)
+                scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, min_lr_koef=min_lr_koef)
             elif name_sheduler == "inverse_sqrt":
                 scheduler = get_inverse_sqrt_schedule(optimizer, num_warmup_steps=num_warmup_steps)
             elif name_sheduler == "linear":
-                scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
+                scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps, min_lr_koef=min_lr_koef)
             elif name_sheduler == "cosine":
-                scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
+                scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps, min_lr_koef=min_lr_koef)
             elif name_sheduler == "cosine_with_restarts":
-                scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
+                scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps, min_lr_koef=min_lr_koef)
             elif name_sheduler == "polynomial":
                 scheduler = get_polynomial_decay_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
             elif name_sheduler == "ReduceLROnPlateau":

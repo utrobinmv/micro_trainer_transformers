@@ -134,13 +134,42 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
             chk_dict['current_epoch'] = current_epoch
             torch.save(chk_dict, os.path.join(folder_name,'options.pt'))
 
-    def load_checkpoint(self,pl_model,folder_name):
+    def load_checkpoint(self,pl_model,folder_name,iterator_break_resume=False):
             device = pl_model.model.device
             device = 'cpu'
             pl_model.model.load_state_dict(torch.load(os.path.join(folder_name,'model.pt'), map_location=device))
             return torch.load(os.path.join(folder_name,'options.pt'), map_location=device)
 
-    def fit(self, pl_model=None, ckpt_path=None, resume_sheduler: bool = True):
+    def fit(self, pl_model=None, ckpt_path=None, resume_sheduler: bool = True,
+            dict_iterator: dict[str,str] = {'iterator': False},
+            dict_skip_steps: dict[str, int | bool] = {'skip_steps': 0, 'with_data': False},
+            validate_on_start: bool = False):
+        """
+        resume_sheduler = True - это признак который говорит, что мы восстанавливаем скорость обучения, и сохраненного трейна
+        т.е. мы не меняем историю изменения скорости обучения
+        resume_sheduler = False - означает, что у нас новая стратегия изменения скорости обучения
+        """
+        iterator = False
+        iterator_break_zero_grad_step = False
+        iterator_break_optimizer_step = False
+        iterator_break_sheduler_step = False
+        iterator_break_save_checkpoint = False
+        iterator_loss_koef = 1.0
+        if 'iterator' in dict_iterator.keys() and dict_iterator['iterator']:
+            iterator = dict_iterator['iterator']
+            print('iterator:', dict_iterator)
+
+            if 'iterator_break_zero_grad_step' in dict_iterator.keys():
+                iterator_break_zero_grad_step = dict_iterator['iterator_break_zero_grad_step']
+            if 'iterator_break_optimizer_step' in dict_iterator.keys():
+                iterator_break_optimizer_step = dict_iterator['iterator_break_optimizer_step']
+            if 'iterator_break_sheduler_step' in dict_iterator.keys():
+                iterator_break_sheduler_step = dict_iterator['iterator_break_sheduler_step']
+            if 'iterator_break_save_checkpoint' in dict_iterator.keys():
+                iterator_break_save_checkpoint = dict_iterator['iterator_break_save_checkpoint']
+            if 'iterator_loss_koef' in dict_iterator.keys():
+                iterator_loss_koef = dict_iterator['iterator_loss_koef']
+
         #replace function
         pl_model.log = self.log
         pl_model.log_dict = self.log_dict
@@ -171,17 +200,36 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
 
         progress_bar = tqdm(total=train_max_step,desc='Train')
         
-        pl_model.train()
-
-        pl_model.on_train_start()
-
         #fit loop 
         #https://pytorch-lightning.readthedocs.io/en/1.8.6/common/lightning_module.html
 
         iter_num = 0
         epoch_num = 0
 
-        if not ckpt_path is None:
+        if 'skip_steps' in dict_skip_steps.keys() and dict_skip_steps['skip_steps']:
+            iter_num = dict_skip_steps['skip_steps']
+
+            if 'with_data' in dict_skip_steps.keys() and dict_skip_steps['with_data']:
+                for step_train in range(iter_num):
+                    for micro_step in range(self.accumulate_grad_batches):
+                        _ = self.dm.get_train_batch()
+                    progress_bar.update(1)
+
+            self.global_step = iter_num
+
+        if validate_on_start:
+            # validate
+            self.validate(pl_model)
+
+        pl_model.train()
+
+        pl_model.on_train_start()
+
+        if not ckpt_path is None: # DEPRECATE
+            """
+            Старый более сложный, но пока рабочий метод восстановления чекпоинтов
+            Новый механизм запускается до обучения и он находится в utils и параметр skip_steps
+            """
             print('Resume from checkpoint:',ckpt_path)
             chk_dict = self.load_checkpoint(pl_model,ckpt_path)
             pl_model.to(self.device)            
@@ -194,7 +242,7 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
             
             if resume_sheduler:
                 print(' - resume lr_shedulers')
-                lr_shedulers = chk_dict['lr_shedulers']
+                lr_shedulers = chk_dict['lr_shedulers'] # Работает неверно, не меняет Learning rate
                 
             print('lr_scheduler._last_lr 3:',lr_shedulers[0]['scheduler']._last_lr)
                 
@@ -206,6 +254,8 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
                 optimizer = optimizers[idx]
                 
                 if not resume_sheduler:
+                    # Заполняем в оптимизаторе скорости обучения, на стартовые, так как дальше будем
+                    # Делать фиктивные train loop, и создавать новый график изменения lr
                     for jdx in range(len(optimizer.param_groups)):
                         last_lr = sheduler['scheduler']._last_lr[jdx]
                         optimizer.param_groups[jdx]['lr'] = last_lr
@@ -214,7 +264,6 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
                 if sheduler['interval'] == 'step':
                     sheduler['scheduler'].step()
                 print('lr_scheduler._last_lr 4:',lr_shedulers[0]['scheduler']._last_lr)
-                    
 
             self.global_step = iter_num
             
@@ -235,7 +284,6 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
             if not resume_sheduler:
                 print(' - iter steps lr_shedulers:', iter_lr_steps)
                 print('lr_scheduler._last_lr 5:',lr_shedulers[0]['scheduler']._last_lr)
-                            
                 
             #validate
             self.validate(pl_model)
@@ -271,6 +319,8 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
 
                     #add with large model! ?????
                     #loss /= self.accumulate_grad_batches
+                    if iterator_loss_koef != 1.0:
+                        loss *= iterator_loss_koef
 
                     loss.backward()
                 except (RuntimeError) as e:
@@ -286,14 +336,16 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
                 self.log('grad_norm', grad_norm)
 
             # step the optimizers and scaler if training in fp16
-            for optimizer in optimizers:
-                #scaler.step(optimizer)
-                optimizer.step()
+            if not iterator_break_optimizer_step:
+                for optimizer in optimizers:
+                    #scaler.step(optimizer)
+                    optimizer.step()
 
             #scaler.update()
             # flush the gradients as soon as we can, no need for this memory anymore
-            for optimizer in optimizers:
-                optimizer.zero_grad(set_to_none=True)
+            if not iterator_break_zero_grad_step:
+                for optimizer in optimizers:
+                    optimizer.zero_grad(set_to_none=True)
 
             #model.on_train_batch_end()
 
@@ -310,7 +362,8 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
             iter_num += 1
 
             if validate_epoch_end:
-                self.save_checkpoint(pl_model,optimizers,lr_shedulers,iter_num,epoch_num)
+                if not iterator_break_save_checkpoint:
+                    self.save_checkpoint(pl_model,optimizers,lr_shedulers,iter_num,epoch_num)
                 self.validate(pl_model)
                 pl_model.train()
                 pl_model.on_train_epoch_start()
@@ -319,9 +372,10 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
                     self.dm.reset_epoch()
                     epoch_num += 1
 
-                    for sheduler in lr_shedulers:
-                        if sheduler['interval'] == 'epoch':
-                            sheduler['scheduler'].step()
+                    if not iterator_break_sheduler_step:
+                        for sheduler in lr_shedulers:
+                            if sheduler['interval'] == 'epoch':
+                                sheduler['scheduler'].step()
 
                     if self.max_epochs >= epoch_num:
                         break
@@ -330,14 +384,18 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
             if iter_num > train_max_step:
                 break
 
-            for sheduler in lr_shedulers:
-                if sheduler['interval'] == 'step':
-                    sheduler['scheduler'].step()
+            if not iterator_break_sheduler_step:
+                for sheduler in lr_shedulers:
+                    if sheduler['interval'] == 'step':
+                        sheduler['scheduler'].step()
 
             if loss and grad_norm:
                 progress_bar.set_postfix({"loss": "{:.6f}".format(loss.item()),
                                           "grad_norm": "{:.6f}".format(grad_norm)})
             progress_bar.update(1)
+
+            if iterator:
+                yield iter_num
 
         pl_model.on_train_end()
 

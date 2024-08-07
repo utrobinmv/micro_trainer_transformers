@@ -19,6 +19,7 @@ class TrainigParameters:
     seed: int = 42 #seed
     collate_fn: Optional[Any] = None
     learning_rate: float = 0.001
+    learning_rate_final: float = 0.0
     weight_decay: float = 1e-2
     eps: float = 1e-8
     max_grad_norm: float = 1.0 #Максимальная норма градиента.
@@ -57,11 +58,15 @@ class TrainigParameters:
     fp16: bool = False #Использовать ли точность fp16 (смешанную) вместо 32-битной
     torch_compile: bool = False #If set to `True`, модель будет завернута в `torch.compile`.
 
+    #generation
+    generation_config: Optional[Union[str, Dict]] = None #Optional[Union[str, Path, GenerationConfig]] #Идентификатор модели, путь к файлу или URL-адрес, указывающий на json-файл GenerationConfig для использования во время прогнозирования.
+    predict_with_generate: bool = False #Следует ли использовать generate для расчета генеративных метрик (ROUGE, BLEU).
+
     #project    
     project_name: str = 'debug_classificate'
     model_master_name: str = 'linear_simple'
     model_comment: str = ''
-    root_path_checkpoint = '/checkpoints'
+    root_path_checkpoint = '/checkpoints'    
 
     #local trainer
     local_trainer: bool | str = False  # False True 'sentence'
@@ -139,6 +144,9 @@ class TrainigParameters:
         self.bf16 = ta.bf16
         self.fp16 = ta.fp16
         self.torch_compile = ta.torch_compile
+        
+        self.generation_config = ta.generation_config
+        self.predict_with_generate = ta.predict_with_generate
         
         if ta.warmup_steps > 0:
             self.warmup_steps = ta.warmup_steps

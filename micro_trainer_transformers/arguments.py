@@ -131,8 +131,8 @@ class TrainingArguments:
     torch_compile_backend: Optional[str] = None #Какой бэкэнд использовать с `torch.compile`, передача которого вызовет компиляцию модели.
     torch_compile_mode: Optional[str] = None #Какой режим использовать с `torch.compile`, передача которого вызовет компиляцию модели.
 
-@dataclass
-class Seq2SeqTrainingArguments(TrainingArguments):
+# @dataclass
+# class Seq2SeqTrainingArguments(TrainingArguments):
     sortish_sampler: bool = False #Использовать SortishSampler или нет.
     predict_with_generate: bool = False #Следует ли использовать generate для расчета генеративных метрик (ROUGE, BLEU).
     generation_max_length: Optional[int] = None #`max_length` для использования в каждом цикле оценки, когда `predict_with_generate=True`. По умолчанию будет установлено значение `max_length` конфигурации модели.
