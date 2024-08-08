@@ -149,6 +149,7 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
         т.е. мы не меняем историю изменения скорости обучения
         resume_sheduler = False - означает, что у нас новая стратегия изменения скорости обучения
         """
+        print(dict_iterator)
         iterator = False
         iterator_break_zero_grad_step = False
         iterator_break_optimizer_step = False
@@ -156,6 +157,7 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
         iterator_break_save_checkpoint = False
         iterator_loss_koef = 1.0
         if 'iterator' in dict_iterator.keys() and dict_iterator['iterator']:
+            print('dict_iterator', dict_iterator)
             iterator = dict_iterator['iterator']
             print('iterator:', dict_iterator)
 

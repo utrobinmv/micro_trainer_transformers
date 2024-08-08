@@ -729,15 +729,19 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         
         return lr_recomend
 
-    def fit(self,resume_from_checkpoint=None, resume_sheduler: bool = True, **kwargs):
+    def fit(self, resume_from_checkpoint=None, **kwargs):
         
         self.create_trainer()
 
         save_useful_info(self.training_params.path_log,self.model,self.training_params.__dict__, self.m_trainer.__dict__)
 
-        self.m_trainer.fit(self,ckpt_path=resume_from_checkpoint, **kwargs)
+        print('kwargs',kwargs)
+        
+        iterator = self.m_trainer.fit(self,ckpt_path=resume_from_checkpoint, **kwargs)
+        if iterator is not None:
+            for _ in iterator:
+                pass
         
         if not self.training_params.local_trainer:
             print('Best model path:', self.checkpoint_callback.best_model_path)
             print(' --- model score:', self.checkpoint_callback.best_model_score)
-        
