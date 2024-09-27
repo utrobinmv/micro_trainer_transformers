@@ -145,8 +145,14 @@ class TrainigParameters:
         self.fp16 = ta.fp16
         self.torch_compile = ta.torch_compile
         
-        self.generation_config = ta.generation_config
-        self.predict_with_generate = ta.predict_with_generate
+        try:
+            self.generation_config = ta.generation_config
+        except:
+            pass
+        try:
+            self.predict_with_generate = ta.predict_with_generate
+        except:
+            pass
         
         if ta.warmup_steps > 0:
             self.warmup_steps = ta.warmup_steps
