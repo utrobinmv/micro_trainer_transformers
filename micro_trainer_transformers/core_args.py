@@ -14,6 +14,7 @@ class TrainigParameters:
     evaluation_strategy: str = 'steps' #'steps' or 'epoch'. Делать валидацию либо каждую эпоху или через val_check_interval шагов
     warmup_steps: Optional[int] = None
     val_check_interval: int = 0 #Использовать всегда, если evaluation_strategy, устанавливать как len(ds) / (batch_size * evaluation_strategy)
+    save_steps: int = 0
     
     num_workers: int = 4
     seed: int = 42 #seed
@@ -118,11 +119,12 @@ class TrainigParameters:
         _ = ta.overwrite_output_dir
         _ = ta.per_device_eval_batch_size
         _ = ta.save_strategy #save_strategy должно быть одинаково с evaluation_strategy (дублирование параметров)
-        _ = ta.save_steps #у меня анализируется данные из eval_steps
+        
+        self.save_steps = ta.save_steps #у меня анализируется данные из eval_steps
+        if self.save_steps == 0:
+            self.save_steps = ta.eval_steps
         
         _ = ta.load_best_model_at_end #Не реализовано
-        
-        assert ta.eval_steps == ta.save_steps #У меня это один и тот же параметр, значит данные должны быть равны
         
         self.max_grad_norm = ta.max_grad_norm
         self.evaluation_strategy = ta.evaluation_strategy

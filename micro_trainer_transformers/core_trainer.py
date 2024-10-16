@@ -52,6 +52,7 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
                  precision=None,
                  gradient_clip_val=0.0,
                  val_check_interval=None,
+                 save_steps=None,
                  path_log=None,
                  path_checkpoints=None):
         super().__init__()
@@ -67,6 +68,7 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
         self.accumulate_grad_batches=accumulate_grad_batches
         self.gradient_clip_val = gradient_clip_val
         self.val_check_interval = val_check_interval
+        self.save_steps = save_steps
 
 
 
@@ -143,7 +145,9 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
     def fit(self, pl_model=None, ckpt_path=None, resume_sheduler: bool = True,
             dict_iterator: dict[str,str] = {'iterator': False},
             dict_skip_steps: dict[str, int | bool] = {'skip_steps': 0, 'with_data': False},
-            validate_on_start: bool = False):
+            validate_on_start: bool = False,
+            train_break_on_error: bool = False, train_single_gpu: bool = True
+            ):
         """
         resume_sheduler = True - это признак который говорит, что мы восстанавливаем скорость обучения, и сохраненного трейна
         т.е. мы не меняем историю изменения скорости обучения
@@ -176,7 +180,7 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
         pl_model.log = self.log
         pl_model.log_dict = self.log_dict
 
-        if ckpt_path is None:
+        if ckpt_path is None and train_single_gpu:
             pl_model.to(self.device)
         # initialize a GradScaler. If enabled=False scaler is a no-op
         #scaler = torch.cuda.amp.GradScaler(enabled=(self.dtype == 'float16'))
@@ -327,6 +331,8 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
                     loss.backward()
                 except (RuntimeError) as e:
                     print('runtime error on step:', self.global_step, e)
+                    if train_break_on_error:
+                        raise
                     loss = None
                     cleanup()
             
@@ -351,6 +357,16 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
 
             #model.on_train_batch_end()
 
+            #Проверка нужно ли запустить сохранение
+            save_epoch_end = False
+            if not self.save_steps is None:
+                if iter_num % self.save_steps == 0 and iter_num != 0:
+                    save_epoch_end = True
+            elif self.dm.end_epoch:
+                save_epoch_end = True
+            else:
+                pass
+
             #Проверка нужно ли запустить валидацинный цикл
             validate_epoch_end = False
             if not self.val_check_interval is None:
@@ -363,9 +379,13 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
 
             iter_num += 1
 
-            if validate_epoch_end:
+            if save_epoch_end:
                 if not iterator_break_save_checkpoint:
                     self.save_checkpoint(pl_model,optimizers,lr_shedulers,iter_num,epoch_num)
+
+            if validate_epoch_end:
+                # if not iterator_break_save_checkpoint:
+                #     self.save_checkpoint(pl_model,optimizers,lr_shedulers,iter_num,epoch_num)
                 self.validate(pl_model)
                 pl_model.train()
                 pl_model.on_train_epoch_start()

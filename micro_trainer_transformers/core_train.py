@@ -636,6 +636,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                         device='cuda',precision=precision,
                         gradient_clip_val=self.training_params.max_grad_norm,
                         val_check_interval=val_check_interval,
+                        save_steps=self.training_params.save_steps,
                         path_log=self.training_params.path_log,
                         path_checkpoints=self.training_params.path_checkpoint)
             else:
@@ -646,6 +647,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                         device='cuda',precision=precision,
                         gradient_clip_val=self.training_params.max_grad_norm,
                         val_check_interval=val_check_interval,
+                        save_steps=self.training_params.save_steps,
                         path_log=self.training_params.path_log,
                         path_checkpoints=self.training_params.path_checkpoint)
 
