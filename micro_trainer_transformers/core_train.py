@@ -356,6 +356,62 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                 if self.compute_metrics_fn:
                     self.validate_labels.extend(list(batch['labels'].detach().cpu()))
                     self.validate_predictions.extend(list(preds.detach().cpu()))
+
+                max_length = batch['labels'].shape[1]
+                generation_config.max_length = max_length + 10
+                
+                preds = self.model.generate(batch['input_ids'], generation_config=generation_config)
+
+            elif valid and self.training_params.predict_with_mask_generate:
+                preds = None
+                if self.training_params.generation_config:
+                    generation_config = self.training_params.generation_config
+                else:
+                    generation_config = self.model.generation_config
+                    
+                # labels = batch['labels']
+                pred_input_ids = batch['input_ids'].long()
+
+                for idx, (one_input, one_label) in enumerate(zip( list(batch['input_ids']),
+                                                                  list(batch['labels']) )):
+                    N = 0
+                    while N < one_input.shape[0]:
+                        np_find = (one_label[N:] != -100).nonzero(as_tuple=True)[0]
+                        if np_find.shape[0] > 0:
+                            index = np_find[0].item() + N
+
+                            np_find_end = (one_label[index:] == -100).nonzero(as_tuple=True)[0]
+                            if np_find_end.shape[0] > 0:
+                                index_end = np_find_end[0].item() + index
+                            else:
+                                index_end = one_label.shape[0]
+
+                            generate_length = index_end - index
+                            generation_config.max_new_tokens = generate_length
+
+                            inputs = pred_input_ids[idx, 0:index].unsqueeze(0)
+
+                            tmp_preds = self.model.generate(inputs, generation_config=generation_config)
+
+                            # Доудлинняем заданный тензор
+                            if tmp_preds.size(1) < index_end:
+                                # Создаем новый тензор нужной длины, заполняя его нулями
+                                padded_tensor = torch.zeros(index_end, dtype=tmp_preds.dtype)
+                                # Копируем данные из исходного тензора в новый
+                                padded_tensor[:tmp_preds.size(1)] = tmp_preds[0]
+                                tmp_preds = padded_tensor
+
+                            pred_input_ids[idx, 0:index_end] = tmp_preds
+                            N = index_end
+
+                        a = 1
+
+                    preds = pred_input_ids
+
+                
+                if self.compute_metrics_fn:
+                    self.validate_labels.extend(list(batch['labels'].detach().cpu()))
+                    self.validate_predictions.extend(list(preds.detach().cpu()))
                 
             else:
             

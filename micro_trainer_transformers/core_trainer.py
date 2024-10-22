@@ -146,7 +146,7 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
             dict_iterator: dict[str,str] = {'iterator': False},
             dict_skip_steps: dict[str, int | bool] = {'skip_steps': 0, 'with_data': False},
             validate_on_start: bool = False,
-            train_break_on_error: bool = False, train_single_gpu: bool = True
+            train_break_on_error: bool = False, single_gpu: bool = True
             ):
         """
         resume_sheduler = True - это признак который говорит, что мы восстанавливаем скорость обучения, и сохраненного трейна
@@ -180,7 +180,7 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
         pl_model.log = self.log
         pl_model.log_dict = self.log_dict
 
-        if ckpt_path is None and train_single_gpu:
+        if ckpt_path is None and single_gpu:
             pl_model.to(self.device)
         # initialize a GradScaler. If enabled=False scaler is a no-op
         #scaler = torch.cuda.amp.GradScaler(enabled=(self.dtype == 'float16'))

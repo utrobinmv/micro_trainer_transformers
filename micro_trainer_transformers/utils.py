@@ -109,16 +109,35 @@ def optimizer_to(optim, device):
 def resume_checkpoint_param_trainer(model, 
                                     optimizers, 
                                     resume_from_checkpoint=None,
-                                    resume_sheduler=True):
+                                    resume_sheduler=True,
+                                    single_gpu=True):
 
-        model_device = model.device
         optimizer, scheduler = optimizers
 
-        device = 'cpu'
-        model.load_state_dict(torch.load(os.path.join(resume_from_checkpoint,'model.pt'), map_location=device))
-        chk_dict = torch.load(os.path.join(resume_from_checkpoint,'options.pt'), map_location=device)
+        model_device = model.device
+        device_store = {'__model__':model_device}
+        for param_name, param in model.named_parameters():
+            device_store[param_name] = param.device
 
-        model.to(model_device)            
+        if single_gpu:
+            device = 'cpu'
+            model.load_state_dict(torch.load(os.path.join(resume_from_checkpoint,'model.pt'), map_location=device))
+            chk_dict = torch.load(os.path.join(resume_from_checkpoint,'options.pt'), map_location=device)
+        else:
+            model.load_state_dict(torch.load(os.path.join(resume_from_checkpoint,'model.pt')))
+            chk_dict = torch.load(os.path.join(resume_from_checkpoint,'options.pt'))
+
+        if single_gpu:
+            model.to(model_device)
+        # else:
+        #     model.to(device_store['__model__'])
+        #     for param_name, param in model.named_parameters():
+        #         param_device = device_store[param_name]
+        #         param.data = param.data.to(param_device)
+        #         if param._grad is not None:
+        #             param._grad.data = param._grad.data.to(param_device)
+
+
         optimizers_load = chk_dict['optimizers']
         assert len(optimizers_load) == 1
 
@@ -127,7 +146,8 @@ def resume_checkpoint_param_trainer(model,
 
         for idx in range(1):
             optimizer.load_state_dict(optimizers_load[idx])
-            optimizer_to(optimizer, model_device)   
+            if single_gpu:
+                optimizer_to(optimizer, model_device)
 
         iter_num = chk_dict['current_step']
 

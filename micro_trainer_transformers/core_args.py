@@ -62,6 +62,7 @@ class TrainigParameters:
     #generation
     generation_config: Optional[Union[str, Dict]] = None #Optional[Union[str, Path, GenerationConfig]] #Идентификатор модели, путь к файлу или URL-адрес, указывающий на json-файл GenerationConfig для использования во время прогнозирования.
     predict_with_generate: bool = False #Следует ли использовать generate для расчета генеративных метрик (ROUGE, BLEU).
+    predict_with_mask_generate: bool = False # Следует ли использовать генерацию с маской
 
     #project    
     project_name: str = 'debug_classificate'
