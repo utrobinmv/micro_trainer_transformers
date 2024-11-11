@@ -2,6 +2,7 @@ from contextlib import nullcontext
 from tqdm.auto import tqdm
 import os
 import pickle
+import threading
 import torch
 import gc
 
@@ -16,12 +17,15 @@ def cleanup():
     torch.cuda.empty_cache()
 
 class LocalDataModule:
-    def __init__(self, mode, model):
+    def __init__(self, mode, model, reload_train_dataloader_with_buffer_end):
         self.mode = mode
         self.model = model
         self.end_epoch = False
+        self.reload_train_dataloader_with_buffer_end = reload_train_dataloader_with_buffer_end
 
         self.dl_train = model.train_dataloader()
+        self.new_dl_train = None
+        self.load_thread = None
         self.dl_valid = model.val_dataloader()
 
         self.dl_train_iter = iter(self.dl_train)
@@ -29,11 +33,39 @@ class LocalDataModule:
 
     def reset_epoch(self):
         self.end_epoch = False
+    
+    def start_preload_train_dataloader(self):
+        # Запускаем загрузку в отдельном потоке
+        if self.load_thread is None: # and not self.load_thread.is_alive():
+            self.load_thread = threading.Thread(target=self.preload_train_dataloader)
+            self.load_thread.start()
+    
+    def preload_train_dataloader(self):
+        if self.new_dl_train is None:
+            self.new_dl_train = self.model.train_dataloader()
+    
+    def reload_train_dataloader(self):
+        if not self.new_dl_train:
+            self.start_preload_train_dataloader()
 
+        # Ждем завершения потока, если он еще работает
+        if self.load_thread:
+            self.load_thread.join()
+            
+            self.load_thread = None
+
+        assert not self.new_dl_train is None
+        self.dl_train = self.new_dl_train
+        self.new_dl_train = None
+    
     def get_train_batch(self):
         batch: None = next(self.dl_train_iter, None)
 
         if batch is None:
+            if self.reload_train_dataloader_with_buffer_end:
+                self.reload_train_dataloader()
+                self.start_preload_train_dataloader()
+            
             if self.mode == 'epoch':
                 self.end_epoch = True
             else:
@@ -51,10 +83,11 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
                  accumulate_grad_batches=None, device=None,
                  precision=None,
                  gradient_clip_val=0.0,
-                 val_check_interval=None,
-                 save_steps=None,
-                 path_log=None,
-                 path_checkpoints=None):
+                 # val_check_interval=None,
+                 # save_steps=None,
+                 # path_log=None,
+                 path_checkpoints=None,
+                 **kwargs):
         super().__init__()
 
         self.max_epochs = max_epochs
@@ -67,10 +100,19 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
 
         self.accumulate_grad_batches=accumulate_grad_batches
         self.gradient_clip_val = gradient_clip_val
-        self.val_check_interval = val_check_interval
-        self.save_steps = save_steps
 
+        if 'val_check_interval' in kwargs.keys():
+            self.val_check_interval = kwargs['val_check_interval']
+        if 'save_steps' in kwargs.keys():
+            self.save_steps = kwargs['save_steps']
 
+        self.data_streaming_buffer = self.val_check_interval
+        if 'data_streaming_buffer' in kwargs.keys():
+            self.data_streaming_buffer = kwargs['data_streaming_buffer']
+
+        self.reload_train_dataloader_with_buffer_end = False
+        if 'reload_train_dataloader_with_buffer_end' in kwargs.keys():
+            self.reload_train_dataloader_with_buffer_end = kwargs['reload_train_dataloader_with_buffer_end']
 
         self.device = device
 
@@ -90,8 +132,10 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
         #self.ctx = nullcontext() if self.device == 'cpu' else torch.amp.autocast(device_type=self.device, dtype=ptdtype)
 
         self.logger_tb = None
-        if not path_log is None:
-            self.logger_tb = SummaryWriter(os.path.join(path_log, 'tensorboard'))
+        if 'path_log' in kwargs.keys():
+            path_log = kwargs['path_log']
+            if not path_log is None:
+                self.logger_tb = SummaryWriter(os.path.join(path_log, 'tensorboard'))
 
         self.path_checkpoints = path_checkpoints
 
@@ -191,7 +235,7 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
 
         pl_model.setup("fit")
 
-        self.dm = LocalDataModule(self.mode, pl_model)
+        self.dm = LocalDataModule(self.mode, pl_model, reload_train_dataloader_with_buffer_end = self.reload_train_dataloader_with_buffer_end)
 
         optimizers, lr_shedulers = pl_model.configure_optimizers()
         print('lr_scheduler._last_lr:',lr_shedulers[0]['scheduler']._last_lr)
@@ -402,6 +446,11 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
                     if self.max_epochs >= epoch_num:
                         break
 
+            # if self.reload_train_dataloader_with_buffer_end:
+            #     if iter_num % self.data_streaming_buffer == 0 and iter_num != 0:
+            #         self.dm.reload_train_dataloader()
+            #         self.dm.start_preload_train_dataloader()
+            
             # exit from training loop
             if iter_num > train_max_step:
                 break

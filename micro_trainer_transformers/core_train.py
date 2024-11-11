@@ -2,6 +2,7 @@ from typing import Any, Callable, Dict, NewType, Union, List, Optional, Tuple
 
 import gc
 from tqdm.auto import tqdm
+from dataclasses import asdict
 
 import pandas as pd
 
@@ -147,7 +148,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         if self.training_params.data_streaming_train:
             self.dataset_start_epoch_data_iter = self.dataset_train_size_count
             
-            buffer_size = self.training_params.batch_size * self.training_params.val_check_interval * self.training_params.gradient_accumulation_steps
+            buffer_size = self.training_params.batch_size * self.training_params.data_streaming_buffer * self.training_params.gradient_accumulation_steps
             self.data_buffer_train = []
             for _ in tqdm(range(buffer_size), desc="Reload train dataloader...",leave=False,position=3):
                 #self.pbar_train.display()
@@ -691,10 +692,11 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                         accumulate_grad_batches=self.training_params.gradient_accumulation_steps,
                         device='cuda',precision=precision,
                         gradient_clip_val=self.training_params.max_grad_norm,
-                        val_check_interval=val_check_interval,
-                        save_steps=self.training_params.save_steps,
-                        path_log=self.training_params.path_log,
-                        path_checkpoints=self.training_params.path_checkpoint)
+                        # val_check_interval=val_check_interval,
+                        # save_steps=self.training_params.save_steps,
+                        # path_log=self.training_params.path_log,
+                        path_checkpoints=self.training_params.path_checkpoint,
+                        **asdict(self.training_params))
             else:
 
                 from micro_trainer_transformers.core_trainer import LocalTrainer
@@ -702,10 +704,11 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                         accumulate_grad_batches=self.training_params.gradient_accumulation_steps,
                         device='cuda',precision=precision,
                         gradient_clip_val=self.training_params.max_grad_norm,
-                        val_check_interval=val_check_interval,
-                        save_steps=self.training_params.save_steps,
-                        path_log=self.training_params.path_log,
-                        path_checkpoints=self.training_params.path_checkpoint)
+                        # val_check_interval=val_check_interval,
+                        # save_steps=self.training_params.save_steps,
+                        # path_log=self.training_params.path_log,
+                        path_checkpoints=self.training_params.path_checkpoint,
+                        **asdict(self.training_params))
 
 
     def model_vis_save(self):

@@ -30,6 +30,8 @@ class TrainigParameters:
     #evaluation_strategy: int = 1 #Странная строка, вероятно здесь должна быть другая переменная?
     data_train_shuffle: bool = False
     data_streaming_train: bool = False
+    data_streaming_buffer: int = 0 
+    reload_train_dataloader_with_buffer_end: bool = False 
     data_streaming_train_iter_replace: bool = True #Не завершать эпоху по окончанию итеративного датасета, а перезапускать заново!
     data_streaming_valid: bool = False
     limit_val_batches: int or float or None = None
@@ -72,6 +74,7 @@ class TrainigParameters:
 
     #local trainer
     local_trainer: bool | str = False  # False True 'sentence'
+    path_log: str = None # Путь к логам
     
     def __init__(self):
         
