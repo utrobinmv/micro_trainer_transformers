@@ -28,6 +28,10 @@ class TrainigParameters:
     #data
     batch_size: int = 2
     #evaluation_strategy: int = 1 #Странная строка, вероятно здесь должна быть другая переменная?
+    
+    dataloader_pin_memory: bool = True #Следует ли закреплять память для DataLoader.
+    dataloader_drop_last: bool = False #Отбросить последнюю незавершенную партию, если она не делится на размер партии.
+    
     data_train_shuffle: bool = False
     data_streaming_train: bool = False
     data_streaming_buffer: int = 0 
@@ -142,6 +146,10 @@ class TrainigParameters:
             self.lr_scheduler_type = ta.lr_scheduler_type._value_
         self.seed = ta.seed
 
+        self.dataloader_pin_memory = ta.dataloader_pin_memory
+        self.dataloader_drop_last = ta.dataloader_drop_last
+        self.num_workers = ta.dataloader_num_workers
+        
         #Убрал так как метрика по умолчанию 'loss', а у меня 'valid_loss'
         # if ta.metric_for_best_model: 
         #     self.metric_monitor_name = ta.metric_for_best_model

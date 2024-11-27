@@ -264,6 +264,9 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
                     for micro_step in range(self.accumulate_grad_batches):
                         _ = self.dm.get_train_batch()
                     progress_bar.update(1)
+            else:
+                for step_train in range(iter_num):
+                    progress_bar.update(1)
 
             self.global_step = iter_num
 

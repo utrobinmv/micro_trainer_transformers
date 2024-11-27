@@ -33,6 +33,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         train_dataset: datasets.Dataset,
         eval_dataset: datasets.Dataset,
         data_collator: Any = None,
+        data_sampler: Any = None,
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
         compute_metrics: Any = None,
         evaluator: Any = None,
@@ -90,6 +91,7 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
         
         self.model = model
         self.data_collator = data_collator
+        self.data_sampler = data_sampler
         self.compute_metrics_fn = compute_metrics
         
         self.loss_fn = loss
@@ -189,9 +191,10 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
             num_workers=self.training_params.num_workers,
             shuffle=self.training_params.data_train_shuffle, 
             collate_fn = self.data_collator if self.data_collator else None, 
+            sampler = self.data_sampler if self.data_sampler else None, 
             batch_size = self.training_params.batch_size, 
-            drop_last=False, 
-            pin_memory=True)
+            drop_last=self.training_params.dataloader_drop_last,
+            pin_memory=self.training_params.dataloader_pin_memory)
 
     def val_dataloader(self):
         if self.dataloader_valid is None:
@@ -230,8 +233,8 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
                 shuffle=False, 
                 collate_fn = self.data_collator if self.data_collator else None, 
                 batch_size = self.training_params.batch_size,
-                drop_last=False,
-                pin_memory=True)
+                drop_last=self.training_params.dataloader_drop_last,
+                pin_memory=self.training_params.dataloader_pin_memory)
         
         return self.dataloader_valid
 
