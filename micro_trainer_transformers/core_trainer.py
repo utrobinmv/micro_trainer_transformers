@@ -45,7 +45,7 @@ class LocalDataModule:
             self.new_dl_train = self.model.train_dataloader()
     
     def reload_train_dataloader(self):
-        if not self.new_dl_train:
+        if not self.new_dl_train and self.load_thread is None:
             self.start_preload_train_dataloader()
 
         # Ждем завершения потока, если он еще работает
@@ -64,7 +64,6 @@ class LocalDataModule:
         if batch is None:
             if self.reload_train_dataloader_with_buffer_end:
                 self.reload_train_dataloader()
-                self.start_preload_train_dataloader()
             
             if self.mode == 'epoch':
                 self.end_epoch = True
@@ -74,6 +73,9 @@ class LocalDataModule:
             self.dl_train_iter = iter(self.dl_train)
             
             batch = next(self.dl_train_iter)
+            
+            if self.reload_train_dataloader_with_buffer_end:
+                self.start_preload_train_dataloader()
 
         return batch
 
