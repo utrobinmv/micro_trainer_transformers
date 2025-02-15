@@ -148,6 +148,8 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
             batch = batch.to(self.device)
         elif isinstance(batch,dict):
             for key in batch:
+                if isinstance(batch[key],list): # Если тип список а не тензор то специально не помещаю на GPU
+                    continue
                 batch[key] = batch[key].to(self.device)
         return batch
 
@@ -192,13 +194,15 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
             dict_iterator: dict[str,str] = {'iterator': False},
             dict_skip_steps: dict[str, int | bool] = {'skip_steps': 0, 'with_data': False},
             validate_on_start: bool = False,
-            train_break_on_error: bool = False, single_gpu: bool = True
+            train_break_on_error: bool = False, single_gpu: bool = True,
+            device: str = 'cuda'
             ):
         """
         resume_sheduler = True - это признак который говорит, что мы восстанавливаем скорость обучения, и сохраненного трейна
         т.е. мы не меняем историю изменения скорости обучения
         resume_sheduler = False - означает, что у нас новая стратегия изменения скорости обучения
         """
+        self.device = device
         print(dict_iterator)
         iterator = False
         iterator_break_zero_grad_step = False

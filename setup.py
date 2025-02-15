@@ -10,7 +10,7 @@ if os.path.exists("README.md"):
 
 setuptools.setup(
     name="micro_trainer_transformers",
-    version="0.1.6",
+    version="0.1.7",
     author="Utrobin Mikhail",
     author_email="utrobinmv@yandex.ru",
     description=description,
