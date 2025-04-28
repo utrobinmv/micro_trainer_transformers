@@ -5,6 +5,7 @@ import pickle
 import threading
 import torch
 import gc
+import copy
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -179,16 +180,24 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
             for optimizer in optimizers:
                 save_optimizers.append(optimizer.state_dict())
             chk_dict['optimizers'] = save_optimizers
-            chk_dict['lr_shedulers'] = lr_shedulers
+
+            save_lr_shedulers = []
+            for lr_sheduler in lr_shedulers:
+                it = copy.copy(lr_sheduler)
+                it['state_scheduler'] = it.pop('scheduler').state_dict()
+                save_lr_shedulers.append(it)
+
+            chk_dict['lr_shedulers'] = save_lr_shedulers
             chk_dict['current_step'] = current_step
             chk_dict['current_epoch'] = current_epoch
-            torch.save(chk_dict, os.path.join(folder_name,'options.pt'))
+            torch.save(chk_dict, os.path.join(folder_name,'options.pt'), _use_new_zipfile_serialization=False)
 
-    def load_checkpoint(self,pl_model,folder_name,iterator_break_resume=False):
-            device = pl_model.model.device
-            device = 'cpu'
-            pl_model.model.load_state_dict(torch.load(os.path.join(folder_name,'model.pt'), map_location=device))
-            return torch.load(os.path.join(folder_name,'options.pt'), map_location=device)
+    # def load_checkpoint(self,pl_model,folder_name,iterator_break_resume=False):
+    #         device = pl_model.model.device
+    #         device = 'cpu'
+    #         pl_model.model.load_state_dict(torch.load(os.path.join(folder_name,'model.pt'), map_location=device))
+    #         load_options = torch.load(os.path.join(folder_name,'options.pt'), map_location=device)
+    #         return load_options
 
     def fit(self, pl_model=None, ckpt_path=None, resume_sheduler: bool = True,
             dict_iterator: dict[str,str] = {'iterator': False},
@@ -284,69 +293,69 @@ class LocalTrainer(BaseTrainer, TrainerLogger):
 
         pl_model.on_train_start()
 
-        if not ckpt_path is None: # DEPRECATE
-            """
-            Старый более сложный, но пока рабочий метод восстановления чекпоинтов
-            Новый механизм запускается до обучения и он находится в utils и параметр skip_steps
-            """
-            print('Resume from checkpoint:',ckpt_path)
-            chk_dict = self.load_checkpoint(pl_model,ckpt_path)
-            pl_model.to(self.device)            
-            optimizers_load = chk_dict['optimizers']
-            for idx in range(len(optimizers)):
-                optimizers[idx].load_state_dict(optimizers_load[idx])
-                optimizer_to(optimizers[idx],self.device)
+        # if not ckpt_path is None: # DEPRECATE
+        #     """
+        #     Старый более сложный, но пока рабочий метод восстановления чекпоинтов
+        #     Новый механизм запускается до обучения и он находится в utils и параметр skip_steps
+        #     """
+        #     print('Resume from checkpoint:',ckpt_path)
+        #     chk_dict = self.load_checkpoint(pl_model,ckpt_path)
+        #     pl_model.to(self.device)            
+        #     optimizers_load = chk_dict['optimizers']
+        #     for idx in range(len(optimizers)):
+        #         optimizers[idx].load_state_dict(optimizers_load[idx])
+        #         optimizer_to(optimizers[idx],self.device)
                 
-            print('lr_scheduler._last_lr 2:',lr_shedulers[0]['scheduler']._last_lr)
+        #     print('lr_scheduler._last_lr 2:',lr_shedulers[0]['scheduler']._last_lr)
             
-            if resume_sheduler:
-                print(' - resume lr_shedulers')
-                lr_shedulers = chk_dict['lr_shedulers'] # Работает неверно, не меняет Learning rate
+        #     if resume_sheduler:
+        #         print(' - resume lr_shedulers')
+        #         lr_shedulers = chk_dict['lr_shedulers'] # Работает неверно, не меняет Learning rate
                 
-            print('lr_scheduler._last_lr 3:',lr_shedulers[0]['scheduler']._last_lr)
+        #     print('lr_scheduler._last_lr 3:',lr_shedulers[0]['scheduler']._last_lr)
                 
-            iter_num = chk_dict['current_step']
-            epoch_num = chk_dict['current_epoch']
+        #     iter_num = chk_dict['current_step']
+        #     epoch_num = chk_dict['current_epoch']
             
-            for idx in range(len(lr_shedulers)):
-                sheduler = lr_shedulers[idx]
-                optimizer = optimizers[idx]
+        #     for idx in range(len(lr_shedulers)):
+        #         sheduler = lr_shedulers[idx]
+        #         optimizer = optimizers[idx]
                 
-                if not resume_sheduler:
-                    # Заполняем в оптимизаторе скорости обучения, на стартовые, так как дальше будем
-                    # Делать фиктивные train loop, и создавать новый график изменения lr
-                    for jdx in range(len(optimizer.param_groups)):
-                        last_lr = sheduler['scheduler']._last_lr[jdx]
-                        optimizer.param_groups[jdx]['lr'] = last_lr
+        #         if not resume_sheduler:
+        #             # Заполняем в оптимизаторе скорости обучения, на стартовые, так как дальше будем
+        #             # Делать фиктивные train loop, и создавать новый график изменения lr
+        #             for jdx in range(len(optimizer.param_groups)):
+        #                 last_lr = sheduler['scheduler']._last_lr[jdx]
+        #                 optimizer.param_groups[jdx]['lr'] = last_lr
                 
-                sheduler['scheduler'].optimizer = optimizer
-                if sheduler['interval'] == 'step':
-                    sheduler['scheduler'].step()
-                print('lr_scheduler._last_lr 4:',lr_shedulers[0]['scheduler']._last_lr)
+        #         sheduler['scheduler'].optimizer = optimizer
+        #         if sheduler['interval'] == 'step':
+        #             sheduler['scheduler'].step()
+        #         print('lr_scheduler._last_lr 4:',lr_shedulers[0]['scheduler']._last_lr)
 
-            self.global_step = iter_num
+        #     self.global_step = iter_num
             
-            iter_lr_steps = 0
-            print(' - batch resume iter num:', iter_num)
-            for step_train in range(iter_num):
-                for micro_step in range(self.accumulate_grad_batches):
-                    _ = self.dm.get_train_batch()
-                progress_bar.update(1)
+        #     iter_lr_steps = 0
+        #     print(' - batch resume iter num:', iter_num)
+        #     for step_train in range(iter_num):
+        #         for micro_step in range(self.accumulate_grad_batches):
+        #             _ = self.dm.get_train_batch()
+        #         progress_bar.update(1)
 
-                if not resume_sheduler:
-                    for idx in range(len(lr_shedulers)):
-                        sheduler = lr_shedulers[idx]
-                        if sheduler['interval'] == 'step':
-                            sheduler['scheduler'].step()
-                            iter_lr_steps += 1
+        #         if not resume_sheduler:
+        #             for idx in range(len(lr_shedulers)):
+        #                 sheduler = lr_shedulers[idx]
+        #                 if sheduler['interval'] == 'step':
+        #                     sheduler['scheduler'].step()
+        #                     iter_lr_steps += 1
 
-            if not resume_sheduler:
-                print(' - iter steps lr_shedulers:', iter_lr_steps)
-                print('lr_scheduler._last_lr 5:',lr_shedulers[0]['scheduler']._last_lr)
+        #     if not resume_sheduler:
+        #         print(' - iter steps lr_shedulers:', iter_lr_steps)
+        #         print('lr_scheduler._last_lr 5:',lr_shedulers[0]['scheduler']._last_lr)
                 
-            #validate
-            self.validate(pl_model)
-            pl_model.train()
+        #     #validate
+        #     self.validate(pl_model)
+        #     pl_model.train()
 
         pl_model.on_train_epoch_start()
 

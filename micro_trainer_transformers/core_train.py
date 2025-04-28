@@ -151,33 +151,36 @@ class UniversalTrainingModule(pl.LightningModule, UniversalOptim):
             self.dataset_start_epoch_data_iter = self.dataset_train_size_count
             
             buffer_size = self.training_params.batch_size * self.training_params.data_streaming_buffer * self.training_params.gradient_accumulation_steps
-            self.data_buffer_train = []
-            for _ in tqdm(range(buffer_size), desc="Reload train dataloader...",leave=False,position=3):
-                #self.pbar_train.display()
-                if self.dataset_train_size_count % (self.training_params.batch_size * self.training_params.gradient_accumulation_steps)  == 0:
-                    if self.pbar_train is not None:
-                        #self.pbar_train.refresh()
-                        self.pbar_train.update(n=0)
-                        self.pbar_train.display()
-                    
-                if buffer_size <= 0:
-                    break
-                item = next(self.dataset_train_iter, "end")
-                if item == "end": #Нашли конец датасета
-                    self.dataset_train_size = self.dataset_train_size_count
-                    #Перезапускаем чтение датасета сначала
-                    self.dataset_train_iter = iter(self.dataset_train)
-                    self.dataset_train_size_count = 0
-                    if self.training_params.data_streaming_train_iter_replace:
-                        #Считываем с начала первый элемент
-                        item = next(self.dataset_train_iter)
-                    else:
+            if buffer_size == 0:
+                data_buffer = self.dataset_train
+            else:
+                self.data_buffer_train = []
+                for _ in tqdm(range(buffer_size), desc="Reload train dataloader...",leave=False,position=3):
+                    #self.pbar_train.display()
+                    if self.dataset_train_size_count % (self.training_params.batch_size * self.training_params.gradient_accumulation_steps)  == 0:
+                        if self.pbar_train is not None:
+                            #self.pbar_train.refresh()
+                            self.pbar_train.update(n=0)
+                            self.pbar_train.display()
+                        
+                    if buffer_size <= 0:
                         break
-                self.data_buffer_train.append(item)
-                buffer_size -= 1
-                self.dataset_train_size_count += 1
-                
-            data_buffer = self.data_buffer_train
+                    item = next(self.dataset_train_iter, "end")
+                    if item == "end": #Нашли конец датасета
+                        self.dataset_train_size = self.dataset_train_size_count
+                        #Перезапускаем чтение датасета сначала
+                        self.dataset_train_iter = iter(self.dataset_train)
+                        self.dataset_train_size_count = 0
+                        if self.training_params.data_streaming_train_iter_replace:
+                            #Считываем с начала первый элемент
+                            item = next(self.dataset_train_iter)
+                        else:
+                            break
+                    self.data_buffer_train.append(item)
+                    buffer_size -= 1
+                    self.dataset_train_size_count += 1
+                    
+                data_buffer = self.data_buffer_train
             
         else:
             if isinstance(self.dataset_train, IterableDataset):

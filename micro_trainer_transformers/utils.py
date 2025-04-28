@@ -148,11 +148,12 @@ def resume_checkpoint_param_trainer(model,
             optimizer.load_state_dict(optimizers_load[idx])
             if single_gpu:
                 optimizer_to(optimizer, model_device)
+            optimizer.load_state_dict(optimizers_load[idx])
 
         iter_num = chk_dict['current_step']
 
         if resume_sheduler:
-            scheduler.load_state_dict(lr_shedulers[0]['scheduler'].state_dict())
+            scheduler.load_state_dict(lr_shedulers[0]['state_scheduler'])
             for jdx in range(len(optimizer.param_groups)):
                 last_lr = scheduler._last_lr[jdx]
                 optimizer.param_groups[jdx]['lr'] = last_lr
